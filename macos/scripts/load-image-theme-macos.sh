@@ -10,6 +10,9 @@ IMAGE=""
 THEME_NAME=""
 FROM_LIBRARY=""
 APPLY_NOW="true"
+SAVE_THEME="true"
+QUIET="false"
+ALLOW_START="true"
 APPEARANCE="auto"
 SAFE_AREA="auto"
 TASK_MODE="auto"
@@ -27,6 +30,9 @@ while [ "$#" -gt 0 ]; do
     --focus-x) FOCUS_X="${2:-}"; shift 2 ;;
     --focus-y) FOCUS_Y="${2:-}"; shift 2 ;;
     --no-apply) APPLY_NOW="false"; shift ;;
+    --transient) SAVE_THEME="false"; shift ;;
+    --quiet) QUIET="true"; shift ;;
+    --no-start) ALLOW_START="false"; shift ;;
     *) fail "Unknown argument: $1" ;;
   esac
 done
@@ -70,13 +76,15 @@ theme_id="img-$(/bin/date '+%Y%m%d%H%M%S')-$$"
 
 progress() {
   printf '%s\n' "$*" >&2
-  notify_user "$*"
+  [ "$QUIET" = "true" ] || notify_user "$*"
 }
 
 progress "Loading image..."
 
 # Fast Node for write-theme (avoid full codesign when possible)
 ensure_node_runtime
+"$NODE" "$SCRIPT_DIR/image-metadata.mjs" --check "$IMAGE" >/dev/null 2>&1 \
+  || fail "Image metadata is invalid or exceeds the 16384px / 50MP safety limit."
 
 image_name="background.jpg"
 temporary="$THEME_DIR/.background.$$.tmp.jpg"
@@ -119,10 +127,12 @@ theme_args=(
 /usr/bin/find "$THEME_DIR" -maxdepth 1 -type f -name 'background.*' ! -name "$image_name" -delete
 trap - EXIT
 
-lib_dir="$THEMES_ROOT/$theme_id"
-/bin/mkdir -p "$lib_dir"
-/bin/cp -f "$THEME_DIR/$image_name" "$THEME_DIR/theme.json" "$lib_dir/"
-/bin/chmod 600 "$lib_dir/"* 2>/dev/null || true
+if [ "$SAVE_THEME" = "true" ]; then
+  lib_dir="$THEMES_ROOT/$theme_id"
+  /bin/mkdir -p "$lib_dir"
+  /bin/cp -f "$THEME_DIR/$image_name" "$THEME_DIR/theme.json" "$lib_dir/"
+  /bin/chmod 600 "$lib_dir/"* 2>/dev/null || true
+fi
 
 dest_lib_img="$IMAGES_DIR/$(/usr/bin/basename "$IMAGE")"
 src_dir="$(cd "$(dirname "$IMAGE")" && pwd -P)"
@@ -142,9 +152,23 @@ if [ -f "$STATE_PATH" ]; then
   [ -n "${saved:-}" ] && PORT="$saved"
 fi
 
+if [ "$ALLOW_START" != "true" ]; then
+  session=""
+  [ -f "$STATE_PATH" ] && session="$(state_field session 2>/dev/null || true)"
+  if [ "$session" != "active" ]; then
+    progress "Ready: ${THEME_NAME} (Codex not started)"
+    exit 0
+  fi
+fi
+
 progress "Hot reapply..."
 if hot_reapply_theme "$PORT" 8000; then
   progress "Done: ${THEME_NAME}"
+  exit 0
+fi
+
+if [ "$ALLOW_START" != "true" ]; then
+  progress "Ready: ${THEME_NAME} (Codex not started)"
   exit 0
 fi
 

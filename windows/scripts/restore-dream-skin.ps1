@@ -117,6 +117,7 @@ try {
 
   $restoreError = $null
   try {
+    $null = Set-DreamSkinRotationEnabled -Enabled $false -StateRoot $StateRoot
     Stop-DreamSkinTrayProcess
     if ($shouldCloseCodex) {
       Stop-DreamSkinCodex -Codex $codex -AllowForce:$forceAuthorized

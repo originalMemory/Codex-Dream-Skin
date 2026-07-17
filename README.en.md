@@ -135,9 +135,10 @@ for the eight individual styles.
 ## What it does
 
 - **Real UI** — Sidebar, cards, project picker, and input stay native. Not a fake full-window screenshot.
-- **Continuous wallpaper** — One 16:9 image spans the full window; adaptive focus, safe-area, and route treatment keep native content readable.
+- **Continuous wallpaper** — Landscape, square, and portrait images span the full window and sidebar; adaptive focus, safe-area, and route treatment keep native content readable.
 - **Swappable art** — Drop in a UI-free image you like and it becomes your theme.
 - **Saved themes** — Switch local themes from the macOS menu bar or Windows system tray.
+- **Automatic rotation** — Cycle through the local image folder in filename order; the default one-minute interval is configurable from the menu bar or tray.
 - **Restorable** — One-click restore to the stock look.
 - **Safer path** — Local-loopback CDP inject only. No official binary or signature changes.
 

@@ -33,10 +33,14 @@ This project injects through **local loopback CDP**. It does **not** modify the 
 #    Codex Dream Skin - Verify.command
 #    Codex Dream Skin - Restore.command
 
-# 5) Optional: menu bar (SwiftBar) — apply, pause, import, and switch
+# 5) Optional: menu bar (SwiftBar) — apply, pause, import, switch, and rotate images
 ./Install\ Menu\ Bar.command
 # Look for 🎨 Skin in the top-right menu bar
 ```
+
+The menu can rotate top-level PNG, JPEG, and WebP files from the local `images`
+folder in filename order. Rotation is off by default; once enabled it uses a
+60-second interval, configurable down to 10 seconds. Pause and Restore stop it.
 
 Install location after step 2:
 

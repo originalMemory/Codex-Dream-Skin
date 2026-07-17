@@ -166,6 +166,60 @@ if /usr/bin/printf '%s\n' "$MENU_IMAGE_OUTPUT" | /usr/bin/grep -F -q 'bad'; then
   printf 'SwiftBar emitted a control-character image filename.\n' >&2
   exit 1
 fi
+/usr/bin/printf '%s\n' "$MENU_IMAGE_OUTPUT" | /usr/bin/grep -F -q '自动换图'
+
+# Rotation is state-only between SwiftBar ticks: no daemon and no saved-theme
+# growth. Force the due timestamp so the test does not wait in real time.
+ROTATE_HOME="$TMP/rotate-home"
+ROTATE_STATE="$ROTATE_HOME/Library/Application Support/CodexDreamSkinStudio"
+/bin/mkdir -p "$ROTATE_STATE/images"
+/usr/bin/printf 'not-an-image\n' > "$ROTATE_STATE/images/0-bad.png"
+/bin/cp "$ROOT/assets/portal-hero.png" "$ROTATE_STATE/images/a.png"
+/bin/cp "$ROOT/presets/preset-midnight-aurora/background.jpg" "$ROTATE_STATE/images/b.jpg"
+if /usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" set-interval 9 >/dev/null 2>&1; then
+  printf 'Rotation accepted an interval below 10 seconds.\n' >&2
+  exit 1
+fi
+/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" set-interval 10
+/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" start
+/usr/bin/printf '0\n' > "$ROTATE_STATE/rotation/last-change"
+/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" tick
+[ "$(/usr/bin/head -n1 "$ROTATE_STATE/rotation/current-image")" = 'a.png' ]
+[ -f "$ROTATE_STATE/theme/theme.json" ]
+[ -z "$(/usr/bin/find "$ROTATE_STATE/themes" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]
+/usr/bin/printf '0\n' > "$ROTATE_STATE/rotation/last-change"
+/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" tick
+[ "$(/usr/bin/head -n1 "$ROTATE_STATE/rotation/current-image")" = 'b.jpg' ]
+/bin/rm -f "$ROTATE_STATE/images/a.png" "$ROTATE_STATE/images/b.jpg"
+/usr/bin/printf 'still-not-an-image\n' > "$ROTATE_STATE/images/1-bad.jpg"
+/usr/bin/printf '0\n' > "$ROTATE_STATE/rotation/last-change"
+/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" tick
+ROTATION_STATUS="$(/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" status)"
+/usr/bin/grep -F -q 'error=No usable image could be applied.' <<< "$ROTATION_STATUS"
+/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" start
+[ "$(/usr/bin/find "$ROTATE_STATE" -maxdepth 1 -name '.rotation-tick.lock' -print -quit)" = '' ]
+/bin/mkdir "$ROTATE_STATE/.rotation-tick.lock"
+(/bin/sleep 0.2; /bin/rmdir "$ROTATE_STATE/.rotation-tick.lock") &
+LOCK_RELEASE_PID="$!"
+/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" stop
+wait "$LOCK_RELEASE_PID"
+ROTATION_STATUS="$(/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
+  "$ROOT/scripts/rotate-images-macos.sh" status)"
+/usr/bin/grep -F -q 'enabled=false' <<< "$ROTATION_STATUS"
+for lifecycle_script in pause-dream-skin-macos.sh restore-dream-skin-macos.sh; do
+  /usr/bin/grep -F -q 'rotate-images-macos.sh" stop' "$ROOT/scripts/$lifecycle_script"
+done
+/usr/bin/grep -F -q 'restore-dream-skin-macos.sh switch-theme-macos.sh' \
+  "$ROOT/scripts/install-menubar-macos.sh"
 
 # seed_bundled_presets is idempotent and must never touch user custom-* packs.
 /usr/bin/env HOME="$TMP/seed-home" /bin/bash -c '

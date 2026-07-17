@@ -21,6 +21,9 @@ done
 discover_codex_app
 require_macos_runtime
 ensure_state_root
+if [ -x "$SCRIPT_DIR/rotate-images-macos.sh" ]; then
+  "$SCRIPT_DIR/rotate-images-macos.sh" stop
+fi
 if [ "$PORT_EXPLICIT" = "false" ] && [ -f "$STATE_PATH" ]; then
   PORT="$(state_field port)" || fail "Could not read the saved CDP port; state was preserved."
 fi

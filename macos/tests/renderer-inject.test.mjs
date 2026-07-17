@@ -41,23 +41,23 @@ assert.match(
 );
 assert.match(
   css,
-  /data-dream-art-wide="true"\]:has\(main\.main-surface\.dream-skin-home-shell\)[\s\S]{0,100}body\s*\{[\s\S]{0,300}background-image:\s*var\(--dream-skin-art\) !important;/,
-  "Wide home artwork should use the same full-window image as utility routes.",
+  /html\.codex-dream-skin:has\(main\.main-surface\.dream-skin-home-shell\) body\s*\{[\s\S]{0,300}background-image:\s*var\(--dream-skin-art\) !important;/,
+  "Every home artwork ratio should use the same full-window image as utility routes.",
 );
 assert.match(
   css,
-  /data-dream-art-wide="true"\]:has\(main\.main-surface\.dream-skin-home-shell\)[\s\S]{0,120}body\s*\{[\s\S]{0,260}background-position:\s*var\(--ds-art-position\) !important;/,
-  "Wide home artwork must honor the configured focal point instead of forcing a centered crop.",
+  /html\.codex-dream-skin:has\(main\.main-surface\.dream-skin-home-shell\) body\s*\{[\s\S]{0,260}background-position:\s*var\(--ds-art-position\) !important;/,
+  "Home artwork must honor the configured focal point instead of forcing a centered crop.",
 );
 assert.match(
   css,
-  /data-dream-art-task-mode="ambient"[\s\S]{0,260}data-dream-art-wide="true"\]:has\(main\.main-surface:not\(\.dream-skin-home-shell\)\)[\s\S]{0,120}body\s*\{[\s\S]{0,260}background-position:\s*var\(--ds-art-position\) !important;/,
-  "Wide task artwork must retain the same focal point as the home route.",
+  /data-dream-art-task-mode="ambient"[\s\S]{0,260}:has\(main\.main-surface:not\(\.dream-skin-home-shell\)\) body\s*\{[\s\S]{0,260}background-position:\s*var\(--ds-art-position\) !important;/,
+  "Task artwork must retain the same focal point as the home route for every ratio.",
 );
 assert.match(
   css,
-  /data-dream-art-wide="true"\]\s+\.composer-surface-chrome\s*\{[\s\S]{0,500}backdrop-filter:\s*none !important;/,
-  "Wide artwork should use one uniform composer surface without a split blur layer.",
+  /html\.codex-dream-skin\s+\.composer-surface-chrome\s*\{[\s\S]{0,500}backdrop-filter:\s*none !important;/,
+  "Every artwork ratio should use one uniform composer surface without a split blur layer.",
 );
 assert.match(
   css,
@@ -66,8 +66,13 @@ assert.match(
 );
 assert.match(
   css,
-  /data-dream-shell="light"\]\[data-dream-art-wide="true"\][\s\S]{0,100}\.composer-surface-chrome\s*\{[\s\S]{0,400}backdrop-filter:\s*blur\(8px\) saturate\(102%\) !important;/,
+  /data-dream-shell="light"\][\s\S]{0,100}\.composer-surface-chrome\s*\{[\s\S]{0,400}backdrop-filter:\s*blur\(8px\) saturate\(102%\) !important;/,
   "The translucent light composer should softly separate text from detailed artwork.",
+);
+assert.doesNotMatch(
+  css,
+  /data-dream-art-wide="true"\]:has\(main\.main-surface\.dream-skin-home-shell\)/,
+  "Home sidebar extension must not depend on a wide-image marker.",
 );
 assert.match(
   template,

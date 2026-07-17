@@ -99,6 +99,7 @@ function Get-DreamSkinThemePaths {
     Images = Join-Path $fullRoot 'images'
     PauseFile = Join-Path $fullRoot 'paused'
     State = Join-Path $fullRoot 'state.json'
+    Rotation = Join-Path $fullRoot 'rotation.json'
   }
 }
 
@@ -244,6 +245,7 @@ function Set-DreamSkinActiveTheme {
     [Parameter(Mandatory = $true)][string]$ImagePath,
     [AllowNull()][object]$Theme,
     [string]$Name,
+    [bool]$ArchiveImage = $true,
     [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
   )
   $paths = Get-DreamSkinThemePaths -StateRoot $StateRoot
@@ -296,11 +298,13 @@ function Set-DreamSkinActiveTheme {
     (Test-DreamSkinThemePathWithin -Path $oldImage -Root $paths.Active)) {
     Remove-Item -LiteralPath $oldImage -Force -ErrorAction SilentlyContinue
   }
-  $imageArchive = Join-Path $paths.Images $imageName
-  Assert-DreamSkinNoReparseComponents -Path $imageArchive
-  Copy-Item -LiteralPath $target -Destination $imageArchive -Force
-  Assert-DreamSkinNoReparseComponents -Path $imageArchive
-  Assert-DreamSkinImageFile -Path $imageArchive
+  if ($ArchiveImage) {
+    $imageArchive = Join-Path $paths.Images $imageName
+    Assert-DreamSkinNoReparseComponents -Path $imageArchive
+    Copy-Item -LiteralPath $target -Destination $imageArchive -Force
+    Assert-DreamSkinNoReparseComponents -Path $imageArchive
+    Assert-DreamSkinImageFile -Path $imageArchive
+  }
   return Read-DreamSkinTheme -ThemeDirectory $paths.Active
 }
 
@@ -375,6 +379,123 @@ function Use-DreamSkinSavedTheme {
   return Set-DreamSkinActiveTheme -ImagePath $saved.ImagePath -Theme $theme -StateRoot $StateRoot
 }
 
+function Get-DreamSkinRotationState {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  $path = (Get-DreamSkinThemePaths -StateRoot $StateRoot).Rotation
+  $state = $null
+  if (Test-Path -LiteralPath $path -PathType Leaf) {
+    Assert-DreamSkinNoReparseComponents -Path $path
+    try { $state = (Read-DreamSkinUtf8File -Path $path) | ConvertFrom-Json -ErrorAction Stop } catch {}
+  }
+  $interval = 60
+  if ($null -ne $state -and $null -ne $state.intervalSeconds) {
+    $parsed = 0
+    if ([int]::TryParse("$($state.intervalSeconds)", [ref]$parsed) -and $parsed -ge 10) { $interval = $parsed }
+  }
+  return [pscustomobject]@{
+    enabled = [bool]($null -ne $state -and $state.enabled -eq $true)
+    intervalSeconds = $interval
+    currentImage = if ($null -ne $state -and $state.currentImage) { "$($state.currentImage)" } else { '' }
+    lastChangeUtc = if ($null -ne $state -and $state.lastChangeUtc) { "$($state.lastChangeUtc)" } else { '' }
+    lastError = if ($null -ne $state -and $state.lastError) { "$($state.lastError)" } else { '' }
+  }
+}
+
+function Write-DreamSkinRotationState {
+  param(
+    [Parameter(Mandatory = $true)][object]$State,
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
+  )
+  $interval = [int]$State.intervalSeconds
+  if ($interval -lt 10) { throw 'Rotation interval must be at least 10 seconds.' }
+  $paths = Get-DreamSkinThemePaths -StateRoot $StateRoot
+  Ensure-DreamSkinManagedDirectory -Path $paths.Root -Root $paths.Root
+  Assert-DreamSkinNoReparseComponents -Path $paths.Rotation
+  $json = $State | ConvertTo-Json -Depth 4
+  Write-DreamSkinUtf8FileAtomically -Path $paths.Rotation -Content ($json + "`r`n")
+  return $State
+}
+
+function Get-DreamSkinRotationImages {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  $paths = Get-DreamSkinThemePaths -StateRoot $StateRoot
+  Ensure-DreamSkinManagedDirectory -Path $paths.Images -Root $paths.Root
+  return @(Get-ChildItem -LiteralPath $paths.Images -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -in @('.png', '.jpg', '.jpeg', '.webp') } |
+    Sort-Object @{ Expression = { $_.Name.ToLowerInvariant() } }, Name)
+}
+
+function Set-DreamSkinRotationInterval {
+  param(
+    [Parameter(Mandatory = $true)][int]$IntervalSeconds,
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
+  )
+  if ($IntervalSeconds -lt 10) { throw 'Rotation interval must be at least 10 seconds.' }
+  $state = Get-DreamSkinRotationState -StateRoot $StateRoot
+  $state.intervalSeconds = $IntervalSeconds
+  return Write-DreamSkinRotationState -State $state -StateRoot $StateRoot
+}
+
+function Set-DreamSkinRotationEnabled {
+  param(
+    [Parameter(Mandatory = $true)][bool]$Enabled,
+    [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
+  )
+  $imageCount = @(Get-DreamSkinRotationImages -StateRoot $StateRoot).Count
+  if ($Enabled -and $imageCount -lt 2) {
+    throw 'Add at least two PNG, JPEG, or WebP files to the images folder.'
+  }
+  $state = Get-DreamSkinRotationState -StateRoot $StateRoot
+  $state.enabled = $Enabled
+  if ($Enabled) {
+    $state.lastChangeUtc = [DateTime]::UtcNow.ToString('o')
+    $state.lastError = ''
+  }
+  return Write-DreamSkinRotationState -State $state -StateRoot $StateRoot
+}
+
+function Invoke-DreamSkinRotationTick {
+  param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
+  $state = Get-DreamSkinRotationState -StateRoot $StateRoot
+  if (-not $state.enabled -or (Test-DreamSkinPaused -StateRoot $StateRoot)) { return $false }
+  $last = [DateTime]::MinValue
+  if ($state.lastChangeUtc) {
+    try { $last = [DateTime]::Parse($state.lastChangeUtc).ToUniversalTime() } catch {}
+  }
+  $now = [DateTime]::UtcNow
+  if (($now - $last).TotalSeconds -lt $state.intervalSeconds) { return $false }
+  $images = @(Get-DreamSkinRotationImages -StateRoot $StateRoot)
+  if ($images.Count -lt 2) {
+    $state.lastChangeUtc = $now.ToString('o')
+    $null = Write-DreamSkinRotationState -State $state -StateRoot $StateRoot
+    return $false
+  }
+  $index = -1
+  for ($itemIndex = 0; $itemIndex -lt $images.Count; $itemIndex += 1) {
+    if ($images[$itemIndex].Name.Equals($state.currentImage, [System.StringComparison]::OrdinalIgnoreCase)) {
+      $index = $itemIndex
+      break
+    }
+  }
+  $startIndex = ($index + 1) % $images.Count
+  for ($offset = 0; $offset -lt $images.Count; $offset += 1) {
+    $next = $images[($startIndex + $offset) % $images.Count]
+    if ($next.Name.Equals($state.currentImage, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
+    try { Assert-DreamSkinImageFile -Path $next.FullName } catch { continue }
+    $null = Set-DreamSkinActiveTheme -ImagePath $next.FullName -Theme $null -Name $next.BaseName `
+      -ArchiveImage $false -StateRoot $StateRoot
+    $state.currentImage = $next.Name
+    $state.lastChangeUtc = $now.ToString('o')
+    $state.lastError = ''
+    $null = Write-DreamSkinRotationState -State $state -StateRoot $StateRoot
+    return $true
+  }
+  $state.lastChangeUtc = $now.ToString('o')
+  $state.lastError = 'No usable image could be applied.'
+  $null = Write-DreamSkinRotationState -State $state -StateRoot $StateRoot
+  return $false
+}
+
 function Set-DreamSkinPaused {
   param(
     [Parameter(Mandatory = $true)][bool]$Paused,
@@ -383,6 +504,7 @@ function Set-DreamSkinPaused {
   $paths = Get-DreamSkinThemePaths -StateRoot $StateRoot
   Ensure-DreamSkinManagedDirectory -Path $paths.Root -Root $paths.Root
   if ($Paused) {
+    $null = Set-DreamSkinRotationEnabled -Enabled $false -StateRoot $StateRoot
     Assert-DreamSkinNoReparseComponents -Path $paths.PauseFile
     Write-DreamSkinUtf8FileAtomically -Path $paths.PauseFile -Content "paused`r`n"
   } else {

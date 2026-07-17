@@ -7,6 +7,17 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const windowsRoot = path.resolve(here, "..");
 const template = await fs.readFile(path.join(windowsRoot, "assets", "renderer-inject.js"), "utf8");
+const css = await fs.readFile(path.join(windowsRoot, "assets", "dream-skin.css"), "utf8");
+assert.match(
+  css,
+  /html\.codex-dream-skin:has\(main\.main-surface\.dream-home-shell\) body[\s\S]{0,400}background-image:\s*var\(--dream-art\) !important;/,
+  "Every Windows artwork ratio should extend behind the home sidebar.",
+);
+assert.doesNotMatch(
+  css,
+  /dream-art-wide:has\(main\.main-surface\.dream-home-shell\)/,
+  "Windows home sidebar extension must not depend on a wide-image class.",
+);
 const buildPayload = (config = {}) => template
   .replace("__DREAM_CSS_JSON__", JSON.stringify(".fixture { color: blue; }"))
   .replace("__DREAM_ART_JSON__", JSON.stringify("data:image/png;base64,AA=="))

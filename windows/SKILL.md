@@ -19,7 +19,7 @@ Apply a reversible renderer skin through Chromium DevTools Protocol while launch
 
 - Preserve the official executable, package signature, user threads, pets, plugins, and authentication state.
 - Theme images must be UI-free wallpapers. Never import a README screenshot, fake window, sidebar, card, composer, logo, or text baked into the bitmap.
-- Paint one continuous 16:9 wallpaper across the full Codex window. Let the sidebar, main area, header, and composer act as coordinated readability layers; keep the home route expressive and task routes quieter.
+- Paint one continuous wallpaper of any aspect ratio across the full Codex window. Let the sidebar, main area, header, and composer act as coordinated readability layers; keep the home route expressive and task routes quieter.
 - `appearance: auto` follows the native computed `color-scheme` first and the system appearance only as a fallback. Image brightness may tune color and composition, but must not flip the user's shell mode; explicit `light` and `dark` remain authoritative.
 - Attach the "选择项目" treatment to Codex's real project-selector toolbar and keep the current project button clickable; never draw a disconnected replacement.
 - Keep decorative layers `pointer-events: none` and keep real buttons, navigation, and composer above them.
@@ -51,8 +51,8 @@ node --check assets\renderer-inject.js
 - `assets/renderer-inject.js`: idempotent DOM integration and cleanup.
 - `assets/dream-reference.jpg`: pure 2560 × 1440 Arina Hashimoto wallpaper seeded as the default and as a saved theme; it contains no Codex UI.
 - `assets/theme.json`: shared adaptive theme contract for the seeded preset.
-- `scripts/theme-windows.ps1`: persistent active/saved theme store, safe image import, pause state, and preset seeding.
-- `scripts/tray-dream-skin.ps1`: Windows Forms tray for apply, pause, import, save, switch, and complete restore.
+- `scripts/theme-windows.ps1`: persistent active/saved theme store, safe image import, pause state, image-folder rotation, and preset seeding.
+- `scripts/tray-dream-skin.ps1`: Windows Forms tray for apply, pause, import, save, switch, configurable image rotation, and complete restore.
 - `references/qa-inventory.md`: required functional and visual signoff coverage.
 - `references/runtime-notes.md`: troubleshooting and update behavior.
 - `tests/run-tests.ps1`: configuration, state, recovery, payload, and CDP validation regression checks.

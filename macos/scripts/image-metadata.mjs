@@ -1,3 +1,7 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 const SOF_MARKERS = new Set([
   0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7,
   0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
@@ -128,4 +132,23 @@ export function readImageMetadata(value, extension = "") {
     (bytes[0] === 0xff && bytes[1] === 0xd8)) dimensions = jpegDimensions(bytes);
   else if (normalized === ".webp" || ascii(bytes, 8, 4) === "WEBP") dimensions = webpDimensions(bytes);
   return dimensions ? classifyImageDimensions(dimensions) : null;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const [mode, imagePath] = process.argv.slice(2);
+  if (mode !== "--check" || !imagePath) {
+    console.error("Usage: image-metadata.mjs --check <image>");
+    process.exitCode = 2;
+  } else {
+    try {
+      const resolved = path.resolve(imagePath);
+      const bytes = await fs.readFile(resolved);
+      const metadata = readImageMetadata(bytes, path.extname(resolved));
+      if (!metadata) throw new Error("Image metadata is invalid or exceeds the 16384px / 50MP safety limit");
+      console.log(JSON.stringify(metadata));
+    } catch (error) {
+      console.error(error?.message ?? String(error));
+      process.exitCode = 2;
+    }
+  }
 }

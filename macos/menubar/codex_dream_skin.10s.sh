@@ -47,12 +47,14 @@ RESTORE="$SCRIPTS/restore-dream-skin-macos.sh"
 STATUS="$SCRIPTS/status-dream-skin-macos.sh"
 SWITCH="$SCRIPTS/switch-theme-macos.sh"
 LOAD_IMG="$SCRIPTS/load-image-theme-macos.sh"
+ROTATE="$SCRIPTS/rotate-images-macos.sh"
 [ -x "$APPLY" ] || APPLY="$START"
 
 STATE_ROOT="$HOME/Library/Application Support/CodexDreamSkinStudio"
 THEMES_ROOT="$STATE_ROOT/themes"
 IMAGES_DIR="$STATE_ROOT/images"
 /bin/mkdir -p "$THEMES_ROOT" "$IMAGES_DIR" 2>/dev/null
+[ -x "$ROTATE" ] && "$ROTATE" tick >/dev/null 2>&1
 
 if [ ! -x "$START" ] && [ ! -x "$APPLY" ]; then
   echo "Skin ? | sfimage=paintpalette.fill"
@@ -148,6 +150,38 @@ if [ "$img_count" -eq 0 ]; then
   echo "-- (把纯背景图放进 images 文件夹) | color=#888888"
 fi
 echo "-- 打开图片文件夹 | bash=\"/usr/bin/open\" param1=\"$IMAGES_DIR\" terminal=false"
+
+echo "自动换图"
+rotation_enabled="false"
+rotation_interval="60"
+rotation_current=""
+rotation_error=""
+if [ -x "$ROTATE" ]; then
+  while IFS= read -r line; do
+    case "$line" in
+      enabled=*) rotation_enabled="${line#enabled=}" ;;
+      interval=*) rotation_interval="${line#interval=}" ;;
+      current=*) rotation_current="${line#current=}" ;;
+      error=*) rotation_error="${line#error=}" ;;
+    esac
+  done < <("$ROTATE" status 2>/dev/null)
+fi
+if [ "$rotation_enabled" = "true" ]; then
+  echo "-- 状态：运行中（${rotation_interval} 秒） | color=#4a9b62"
+  [ -n "$rotation_current" ] && /usr/bin/printf '%s\n' "-- 当前：$(menu_text "$rotation_current") | color=#888888"
+  echo "-- 停止自动换图 | bash=\"$ROTATE\" param1=\"stop\" terminal=false refresh=true"
+else
+  echo "-- 状态：已停止（${rotation_interval} 秒） | color=#888888"
+  echo "-- 启动自动换图 | bash=\"$ROTATE\" param1=\"start\" terminal=false refresh=true"
+fi
+[ -n "$rotation_error" ] && /usr/bin/printf '%s\n' "-- 错误：$(menu_text "$rotation_error") | color=#c45c26"
+echo "-- 间隔"
+for seconds in 60 300 900 1800; do
+  label="$((seconds / 60)) 分钟"
+  [ "$rotation_interval" = "$seconds" ] && label="$label ✓"
+  /usr/bin/printf '%s\n' "---- $label | bash=\"$ROTATE\" param1=\"set-interval\" param2=\"$seconds\" terminal=false refresh=true"
+done
+echo "---- 自定义秒数… | bash=\"$ROTATE\" param1=\"prompt-interval\" terminal=false refresh=true"
 
 echo "---"
 echo "完全恢复 | bash=\"$RESTORE\" param1=\"--restore-base-theme\" param2=\"--restart-codex\" terminal=false refresh=true"

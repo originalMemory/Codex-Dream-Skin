@@ -372,6 +372,61 @@ try {
   }
   $null = Use-DreamSkinSavedTheme -ThemeDirectory $savedTheme.Directory -StateRoot $themeStateRoot
 
+  $rotation = Get-DreamSkinRotationState -StateRoot $themeStateRoot
+  if ($rotation.enabled -or $rotation.intervalSeconds -ne 60) {
+    throw 'Rotation defaults are not disabled with a 60-second interval.'
+  }
+  $shortIntervalRejected = $false
+  try { $null = Set-DreamSkinRotationInterval -IntervalSeconds 9 -StateRoot $themeStateRoot } catch {
+    $shortIntervalRejected = $true
+  }
+  if (-not $shortIntervalRejected) { throw 'Rotation accepted an interval below 10 seconds.' }
+  Copy-Item -LiteralPath (Join-Path $Root 'assets\dream-reference.jpg') `
+    -Destination (Join-Path $themePaths.Images 'rotation-z.jpg')
+  [System.IO.File]::WriteAllText((Join-Path $themePaths.Images '000-invalid.png'), 'not-an-image')
+  $savedCountBeforeRotation = @(Get-DreamSkinSavedThemes -StateRoot $themeStateRoot).Count
+  $imageCountBeforeRotation = @(Get-ChildItem -LiteralPath $themePaths.Images -File).Count
+  $null = Set-DreamSkinRotationInterval -IntervalSeconds 10 -StateRoot $themeStateRoot
+  $null = Set-DreamSkinRotationEnabled -Enabled $true -StateRoot $themeStateRoot
+  $rotation = Get-DreamSkinRotationState -StateRoot $themeStateRoot
+  $rotation.lastChangeUtc = [DateTime]::MinValue.ToString('o')
+  $null = Write-DreamSkinRotationState -State $rotation -StateRoot $themeStateRoot
+  if (-not (Invoke-DreamSkinRotationTick -StateRoot $themeStateRoot)) {
+    throw 'A due rotation tick did not apply the next image.'
+  }
+  $firstRotation = Get-DreamSkinRotationState -StateRoot $themeStateRoot
+  if (-not $firstRotation.currentImage -or $firstRotation.currentImage -ceq '000-invalid.png') {
+    throw 'Rotation did not skip an invalid image and persist the applied image.'
+  }
+  $firstRotation.lastChangeUtc = [DateTime]::MinValue.ToString('o')
+  $null = Write-DreamSkinRotationState -State $firstRotation -StateRoot $themeStateRoot
+  $null = Invoke-DreamSkinRotationTick -StateRoot $themeStateRoot
+  $secondRotation = Get-DreamSkinRotationState -StateRoot $themeStateRoot
+  if ($secondRotation.currentImage -ceq $firstRotation.currentImage) {
+    throw 'Rotation did not advance in stable filename order.'
+  }
+  if (@(Get-DreamSkinSavedThemes -StateRoot $themeStateRoot).Count -ne $savedCountBeforeRotation -or
+    @(Get-ChildItem -LiteralPath $themePaths.Images -File).Count -ne $imageCountBeforeRotation) {
+    throw 'Transient rotation grew the saved theme or image library.'
+  }
+  Get-ChildItem -LiteralPath $themePaths.Images -File | Remove-Item -Force
+  [System.IO.File]::WriteAllText((Join-Path $themePaths.Images 'bad-a.png'), 'not-an-image')
+  [System.IO.File]::WriteAllText((Join-Path $themePaths.Images 'bad-b.jpg'), 'still-not-an-image')
+  $secondRotation.currentImage = ''
+  $secondRotation.lastChangeUtc = [DateTime]::MinValue.ToString('o')
+  $null = Write-DreamSkinRotationState -State $secondRotation -StateRoot $themeStateRoot
+  if (Invoke-DreamSkinRotationTick -StateRoot $themeStateRoot) {
+    throw 'Rotation applied an invalid image.'
+  }
+  if (-not (Get-DreamSkinRotationState -StateRoot $themeStateRoot).lastError) {
+    throw 'Rotation did not expose an error when no image was usable.'
+  }
+  Set-DreamSkinPaused -Paused $true -StateRoot $themeStateRoot | Out-Null
+  if ((Get-DreamSkinRotationState -StateRoot $themeStateRoot).enabled) {
+    throw 'Pausing the skin did not stop image rotation.'
+  }
+  Set-DreamSkinPaused -Paused $false -StateRoot $themeStateRoot | Out-Null
+
   $outsideTheme = Join-Path $temporaryRoot 'outside-theme'
   New-Item -ItemType Directory -Path $outsideTheme | Out-Null
   Copy-Item -LiteralPath (Join-Path $Root 'assets\dream-reference.jpg') `
@@ -447,7 +502,7 @@ try {
     if (-not $css.Contains($requiredCss)) { throw "Windows immersive CSS is missing: $requiredCss" }
   }
   $traySource = Read-DreamSkinUtf8File -Path (Join-Path $Root 'scripts\tray-dream-skin.ps1')
-  foreach ($requiredTrayAction in @('System.Windows.Forms.NotifyIcon', '暂停皮肤', '更换背景图', '已保存主题', '完全恢复 Codex')) {
+  foreach ($requiredTrayAction in @('System.Windows.Forms.NotifyIcon', '暂停皮肤', '更换背景图', '已保存主题', '自动换图', '错误：', '完全恢复 Codex')) {
     if (-not $traySource.Contains($requiredTrayAction)) { throw "Tray action is missing: $requiredTrayAction" }
   }
   if (-not $traySource.Contains('$nextPaused') -or -not $traySource.Contains('[System.Windows.Forms.Application]::Exit()')) {

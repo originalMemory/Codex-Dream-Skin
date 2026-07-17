@@ -29,6 +29,12 @@ try {
   $notify.Visible = $true
   $menu = [System.Windows.Forms.ContextMenuStrip]::new()
   $notify.ContextMenuStrip = $menu
+  $rotationTimer = [System.Windows.Forms.Timer]::new()
+  $rotationTimer.Interval = 10000
+  $rotationTimer.add_Tick({
+    try { $null = Invoke-DreamSkinRotationTick -StateRoot $StateRoot } catch {}
+  })
+  $rotationTimer.Start()
 
   function Show-DreamSkinTrayError {
     param([string]$Message)
@@ -133,6 +139,54 @@ try {
     }
     [void]$menu.Items.Add($savedMenu)
 
+    $rotation = Get-DreamSkinRotationState -StateRoot $StateRoot
+    $rotationMenu = [System.Windows.Forms.ToolStripMenuItem]::new('自动换图')
+    $rotationStatus = if ($rotation.enabled) {
+      "运行中 · $($rotation.intervalSeconds) 秒"
+    } else {
+      "已停止 · $($rotation.intervalSeconds) 秒"
+    }
+    $null = Add-DreamSkinTrayItem -Items $rotationMenu.DropDownItems -Text $rotationStatus -Action $null -Enabled $false
+    if ($rotation.currentImage) {
+      $null = Add-DreamSkinTrayItem -Items $rotationMenu.DropDownItems `
+        -Text "当前：$($rotation.currentImage)" -Action $null -Enabled $false
+    }
+    if ($rotation.lastError) {
+      $null = Add-DreamSkinTrayItem -Items $rotationMenu.DropDownItems `
+        -Text "错误：$($rotation.lastError)" -Action $null -Enabled $false
+    }
+    if ($rotation.enabled) {
+      $null = Add-DreamSkinTrayItem -Items $rotationMenu.DropDownItems -Text '停止' -Action {
+        $null = Set-DreamSkinRotationEnabled -Enabled $false -StateRoot $StateRoot
+      }
+    } else {
+      $null = Add-DreamSkinTrayItem -Items $rotationMenu.DropDownItems -Text '启动' -Action {
+        $null = Set-DreamSkinRotationEnabled -Enabled $true -StateRoot $StateRoot
+      }
+    }
+    $intervalMenu = [System.Windows.Forms.ToolStripMenuItem]::new('间隔')
+    foreach ($seconds in @(60, 300, 900, 1800)) {
+      $minutes = [int]($seconds / 60)
+      $label = "$minutes 分钟"
+      if ($rotation.intervalSeconds -eq $seconds) { $label += ' ✓' }
+      $intervalAction = {
+        $null = Set-DreamSkinRotationInterval -IntervalSeconds $seconds -StateRoot $StateRoot
+      }.GetNewClosure()
+      $null = Add-DreamSkinTrayItem -Items $intervalMenu.DropDownItems -Text $label -Action $intervalAction
+    }
+    $null = Add-DreamSkinTrayItem -Items $intervalMenu.DropDownItems -Text '自定义秒数…' -Action {
+      $value = [Microsoft.VisualBasic.Interaction]::InputBox(
+        '输入自动换图间隔（秒，最小 10）：', 'Codex Dream Skin', "$($rotation.intervalSeconds)"
+      )
+      if ($value.Trim()) {
+        $parsed = 0
+        if (-not [int]::TryParse($value, [ref]$parsed)) { throw '间隔必须是整数秒。' }
+        $null = Set-DreamSkinRotationInterval -IntervalSeconds $parsed -StateRoot $StateRoot
+      }
+    }
+    [void]$rotationMenu.DropDownItems.Add($intervalMenu)
+    [void]$menu.Items.Add($rotationMenu)
+
     $null = Add-DreamSkinTrayItem -Items $menu.Items -Text '打开图片文件夹' -Action {
       Start-Process -FilePath explorer.exe -ArgumentList @($paths.Images) | Out-Null
     }
@@ -161,6 +215,7 @@ try {
   })
   [System.Windows.Forms.Application]::Run()
 } finally {
+  if ($null -ne $rotationTimer) { $rotationTimer.Dispose() }
   if ($null -ne $notify) { $notify.Dispose() }
   if ($acquired) { try { $mutex.ReleaseMutex() } catch {} }
   $mutex.Dispose()
