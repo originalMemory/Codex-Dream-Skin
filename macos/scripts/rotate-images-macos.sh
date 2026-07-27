@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Persistent image-folder rotation, ticked by SwiftBar every 10 seconds.
+# Persistent image-folder rotation, ticked by the menu-bar app or SwiftBar.
 
 set -euo pipefail
 . "$(cd "$(dirname "$0")" && pwd -P)/common-macos.sh"

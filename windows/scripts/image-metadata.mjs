@@ -134,7 +134,7 @@ export function readImageMetadata(value, extension = "") {
   return dimensions ? classifyImageDimensions(dimensions) : null;
 }
 
-// Keep the PowerShell theme store on the same strict parser as the injector.
+// Keep the platform theme store on the same strict parser as the injector.
 // The CLI is intentionally tiny: it only reads a user-selected file and emits
 // validated dimensions; it never writes or follows a caller-provided output.
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
