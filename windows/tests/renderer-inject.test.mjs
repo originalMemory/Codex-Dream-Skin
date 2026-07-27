@@ -263,6 +263,23 @@ assert.deepEqual(reinjected.revokedUrls, ["blob:fixture-1"]);
 assert.equal(firstState.cleanup(), false);
 assert.equal(secondState.cleanup(), true);
 
+const liveUpdated = createFixture({ shellPresent: true });
+vm.runInNewContext(payload, liveUpdated.context);
+const liveFirstState = liveUpdated.context.window.__CODEX_DREAM_SKIN_STATE__;
+const liveResult = liveUpdated.context.window.__CODEX_DREAM_SKIN_INSTALL__(
+  ".fixture { color: blue; }",
+  "data:image/png;base64,AQ==",
+  { id: "live-update", appearance: "auto", art: {} },
+);
+const liveSecondState = liveUpdated.context.window.__CODEX_DREAM_SKIN_STATE__;
+assert.equal(liveResult.installed, true);
+assert.equal(liveResult.adaptive, true);
+assert.equal(liveSecondState.artUrl, "blob:fixture-2");
+assert.equal(liveUpdated.rootStyles.get("--dream-art"), 'url("blob:fixture-2")');
+assert.deepEqual(liveUpdated.revokedUrls, ["blob:fixture-1"]);
+assert.equal(liveFirstState.cleanup(), false);
+assert.equal(liveSecondState.cleanup(), true);
+
 const auxiliary = createFixture({ shellPresent: false, staleSkin: true });
 const auxiliaryResult = vm.runInNewContext(payload, auxiliary.context);
 assert.equal(auxiliaryResult.installed, true);

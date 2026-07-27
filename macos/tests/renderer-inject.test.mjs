@@ -439,7 +439,10 @@ assert.equal(cached.window.__CODEX_DREAM_SKIN_STATE__.metrics.analysisRuns, 0);
 
 const previousWideState = synchronousWide.window.__CODEX_DREAM_SKIN_STATE__;
 const stableStyle = synchronousWide.nodes.get("codex-dream-skin-style");
-vm.runInNewContext(synchronousWide.payloadFor({
+const switchedResult = synchronousWide.window.__CODEX_DREAM_SKIN_INSTALL__(
+  ".fixture { color: blue; }",
+  "data:image/png;base64,AQ==",
+  {
   id: "switched-wide",
   appearance: "dark",
   art: { safeArea: "right", taskMode: "ambient" },
@@ -452,9 +455,10 @@ vm.runInNewContext(synchronousWide.payloadFor({
     aspect: "wide",
     taskMode: "ambient",
   },
-}, ".fixture { color: red; }"), synchronousWide.context);
+});
+assert.equal(switchedResult.themeId, "switched-wide");
 assert.equal(synchronousWide.nodes.get("codex-dream-skin-style"), stableStyle);
-assert.equal(stableStyle.textContent, ".fixture { color: red; }");
+assert.equal(stableStyle.textContent, ".fixture { color: blue; }");
 assert.equal(stableStyle.dataset.dreamSkinVersion, "test");
 assert.equal(synchronousWide.rootStyle.values.get("--dream-skin-art"), 'url("blob:fixture-2")');
 assert.deepEqual(synchronousWide.revokedUrls, ["blob:fixture-1"]);

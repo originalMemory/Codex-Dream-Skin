@@ -149,14 +149,14 @@ class CdpSession {
     this.listeners.set(method, listeners);
   }
 
-  send(method, params = {}) {
+  send(method, params = {}, timeoutMs = 10000) {
     if (this.closed) return Promise.reject(new Error("CDP session is closed"));
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`CDP command timed out: ${method}`));
-      }, 10000);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timeout });
       try {
         this.ws.send(JSON.stringify({ id, method, params }));
@@ -395,8 +395,12 @@ async function loadPayload(themeDir = path.join(root, "assets"), candidateTheme 
     .replace("__DREAM_CSS_JSON__", JSON.stringify(css))
     .replace("__DREAM_ART_JSON__", JSON.stringify(artDataUrl))
     .replace("__DREAM_THEME_JSON__", JSON.stringify(loadedTheme.theme));
+  const staticRevision = createHash("sha256")
+    .update(css)
+    .update(template)
+    .digest("hex");
   const { imageBytes: _imageBytes, ...themeState } = loadedTheme;
-  return { ...themeState, payload };
+  return { ...themeState, artDataUrl, css, payload, staticRevision };
 }
 
 async function fileExists(filePath) {
@@ -483,6 +487,35 @@ async function connectCodexTargets(port, timeoutMs, expectedBrowserId) {
 
 async function applyToSession(session, payload) {
   return session.evaluate(payload);
+}
+
+export async function applyThemeUpdateToSession(session, loaded) {
+  const receiver = await session.send("Runtime.evaluate", {
+    expression: "window.__CODEX_DREAM_SKIN_INSTALL__",
+    returnByValue: false,
+  });
+  const objectId = receiver.result?.objectId;
+  if (!objectId) return false;
+  try {
+    const response = await session.send("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: "function(cssText, artDataUrl, themeConfig) { return this(cssText, artDataUrl, themeConfig); }",
+      arguments: [
+        { value: loaded.css },
+        { value: loaded.artDataUrl },
+        { value: loaded.theme },
+      ],
+      awaitPromise: true,
+      returnByValue: true,
+    }, 30000);
+    if (response.exceptionDetails) {
+      const detail = response.exceptionDetails.exception?.description ?? response.exceptionDetails.text;
+      throw new Error(`Renderer theme update failed: ${detail}`);
+    }
+    return response.result?.value?.installed === true;
+  } finally {
+    await session.send("Runtime.releaseObject", { objectId }).catch(() => {});
+  }
 }
 
 export function earlyPayloadFor(payload, revision) {
@@ -694,8 +727,7 @@ async function runWatch(options) {
   const identityAnchor = await connectBrowserIdentityAnchor(options.port, options.browserId);
   const sessions = new Map();
   const earlyScripts = new Map();
-  const fallbackTargets = new Map();
-  const fallbackListeners = new Set();
+  const loadListeners = new Set();
   const targetFailures = new Map();
   let stopping = false;
   let listFailures = 0;
@@ -716,12 +748,11 @@ async function runWatch(options) {
     }
     targetFailures.set(target.id, { failures, lastLogAt: previous.lastLogAt, until: now + delayMs });
   };
-  const attachLoadFallback = (id, target, session) => {
-    if (fallbackListeners.has(id)) return;
-    fallbackListeners.add(id);
+  const attachLoadReinject = (id, target, session) => {
+    if (loadListeners.has(id)) return;
+    loadListeners.add(id);
     let lastReinjectErrorLogAt = 0;
     session.on("Page.loadEventFired", () => {
-      if (!fallbackTargets.get(id)) return;
       setTimeout(() => {
         const operation = paused ? removeFromSession(session) : applyToSession(session, loadedPayload.payload);
         operation.catch((error) => {
@@ -792,6 +823,8 @@ async function runWatch(options) {
       }
       const pauseChanged = nextPaused !== paused;
       const payloadChanged = !nextPaused && nextPayload !== loadedPayload;
+      const lightweightUpdate = payloadChanged && !pauseChanged &&
+        nextPayload.staticRevision === loadedPayload?.staticRevision;
       loadedPayload = nextPayload;
       paused = nextPaused;
 
@@ -803,9 +836,9 @@ async function runWatch(options) {
               await removeFromSession(session);
               await removeEarlyPayload(session, previousEarlyScript);
               earlyScripts.delete(id);
-              fallbackTargets.delete(id);
-              fallbackListeners.delete(id);
             } else {
+              if (lightweightUpdate &&
+                await applyThemeUpdateToSession(session, loadedPayload).catch(() => false)) continue;
               let nextEarlyScript = null;
               try {
                 nextEarlyScript = await registerEarlyPayload(
@@ -814,11 +847,8 @@ async function runWatch(options) {
                   loadedPayload.fingerprint,
                 );
                 if (!nextEarlyScript) throw new Error("CDP did not return an early-script identifier");
-                fallbackTargets.set(id, false);
               } catch (error) {
-                fallbackTargets.set(id, true);
                 console.error(`[dream-skin] early theme refresh unavailable for ${id}: ${error.message}`);
-                attachLoadFallback(id, { id }, session);
               }
               if (nextEarlyScript) earlyScripts.set(id, nextEarlyScript);
               else earlyScripts.delete(id);
@@ -829,8 +859,7 @@ async function runWatch(options) {
             console.error(`[dream-skin] live theme update failed for ${id}: ${error.message}`);
             await removeEarlyPayload(session, earlyScripts.get(id));
             earlyScripts.delete(id);
-            fallbackTargets.delete(id);
-            fallbackListeners.delete(id);
+            loadListeners.delete(id);
             session.close();
             sessions.delete(id);
           }
@@ -846,8 +875,7 @@ async function runWatch(options) {
         if (!activeIds.has(id) || session.closed) {
           await removeEarlyPayload(session, earlyScripts.get(id));
           earlyScripts.delete(id);
-          fallbackTargets.delete(id);
-          fallbackListeners.delete(id);
+          loadListeners.delete(id);
           session.close();
           sessions.delete(id);
           targetFailures.delete(id);
@@ -887,8 +915,7 @@ async function runWatch(options) {
             session.close();
             continue;
           }
-          fallbackTargets.set(target.id, earlyInjectionFallback);
-          if (earlyInjectionFallback) attachLoadFallback(target.id, target, session);
+          attachLoadReinject(target.id, target, session);
           if (identityAnchor.closed) throw new CdpIdentityMismatchError("Original CDP browser identity closed");
           let earlyApplied = false;
           if (!paused && !earlyInjectionFallback) {
@@ -904,8 +931,7 @@ async function runWatch(options) {
           console.log(`[dream-skin] injected target ${target.id}`);
         } catch (error) {
           await removeEarlyPayload(session, earlyScriptId);
-          fallbackTargets.delete(target.id);
-          fallbackListeners.delete(target.id);
+          loadListeners.delete(target.id);
           session?.close();
           if (identityAnchor.closed || error instanceof CdpIdentityMismatchError) break;
           rejectTarget(target, 2500, error);
@@ -920,8 +946,7 @@ async function runWatch(options) {
       session.close();
     }
     earlyScripts.clear();
-    fallbackTargets.clear();
-    fallbackListeners.clear();
+    loadListeners.clear();
   }
 }
 

@@ -469,17 +469,24 @@ async function loadPayload(themeDir) {
     .replace("__DREAM_SKIN_THEME_JSON__", JSON.stringify(theme))
     .replace("__DREAM_SKIN_VERSION_JSON__", JSON.stringify(SKIN_VERSION))
     .replace("__DREAM_SKIN_STYLE_REVISION_JSON__", JSON.stringify(styleRevision));
-  const revision = createHash("sha256")
+  const staticRevision = createHash("sha256")
     .update(SKIN_VERSION)
     .update(css)
     .update(template)
+    .digest("hex")
+    .slice(0, 20);
+  const revision = createHash("sha256")
+    .update(staticRevision)
     .update(JSON.stringify(theme))
     .digest("hex")
     .slice(0, 20);
   return {
+    artDataUrl,
+    css,
     imageBytes: art.length,
     payload,
     revision,
+    staticRevision,
     theme,
     timings: {
       buildMs: Number((performance.now() - startedAt).toFixed(3)),
@@ -490,6 +497,35 @@ async function loadPayload(themeDir) {
 
 async function applyToSession(session, payload) {
   return session.evaluate(payload);
+}
+
+export async function applyThemeUpdateToSession(session, loaded) {
+  const receiver = await session.send("Runtime.evaluate", {
+    expression: "window.__CODEX_DREAM_SKIN_INSTALL__",
+    returnByValue: false,
+  });
+  const objectId = receiver.result?.objectId;
+  if (!objectId) return false;
+  try {
+    const response = await session.send("Runtime.callFunctionOn", {
+      objectId,
+      functionDeclaration: "function(cssText, artDataUrl, themeConfig) { return this(cssText, artDataUrl, themeConfig); }",
+      arguments: [
+        { value: loaded.css },
+        { value: loaded.artDataUrl },
+        { value: loaded.theme },
+      ],
+      awaitPromise: true,
+      returnByValue: true,
+    }, 30000);
+    if (response.exceptionDetails) {
+      const detail = response.exceptionDetails.exception?.description ?? response.exceptionDetails.text;
+      throw new Error(`Renderer theme update failed: ${detail}`);
+    }
+    return response.result?.value?.installed === true;
+  } finally {
+    await session.send("Runtime.releaseObject", { objectId }).catch(() => {});
+  }
 }
 
 async function removeFromSession(session) {
@@ -749,11 +785,14 @@ async function runWatch(options) {
   const refreshPayload = async () => {
     const next = await loadPayload(options.themeDir);
     if (next.revision === current.revision) return;
+    const staticChanged = next.staticRevision !== current.staticRevision;
     current = next;
     for (const record of sessions.values()) {
       const { session } = record;
       if (session.closed) continue;
       try {
+        if (!staticChanged &&
+          await applyThemeUpdateToSession(session, current).catch(() => false)) continue;
         const nextIdentifier = await registerEarly(session, current.payload, current.revision);
         if (record.earlyScriptId) {
           await session.send("Page.removeScriptToEvaluateOnNewDocument", {
@@ -761,10 +800,8 @@ async function runWatch(options) {
           }).catch(() => {});
         }
         record.earlyScriptId = nextIdentifier;
-        record.needsLoadFallback = !nextIdentifier;
         await applyToSession(session, current.payload);
       } catch (error) {
-        record.needsLoadFallback = true;
         console.error(`[dream-skin] theme refresh failed: ${error.message}`);
       }
     }
@@ -813,12 +850,11 @@ async function runWatch(options) {
         let record;
         try {
           session = await connectTarget(target, options.port);
-          record = { session, earlyScriptId: null, needsLoadFallback: false };
+          record = { session, earlyScriptId: null };
           try {
             record.earlyScriptId = await registerEarly(session, current.payload, current.revision);
             await session.evaluate(earlyPayloadFor(current.payload, current.revision));
           } catch (error) {
-            record.needsLoadFallback = true;
             console.error(`[dream-skin] early injection unavailable: ${error.message}`);
           }
           const probe = await waitForCodexProbe(session);
@@ -833,9 +869,8 @@ async function runWatch(options) {
           }
           rejected.delete(target.id);
           session.on("Page.loadEventFired", () => {
-            if (!record.needsLoadFallback) return;
             setTimeout(() => applyToSession(session, current.payload).catch((error) => {
-              console.error(`[dream-skin] fallback reinject failed: ${error.message}`);
+              console.error(`[dream-skin] page reinject failed: ${error.message}`);
             }), 0);
           });
           const earlyApplied = await session.evaluate(

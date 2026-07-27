@@ -1,4 +1,4 @@
-((cssText, artDataUrl, rawConfig) => {
+(window.__CODEX_DREAM_SKIN_INSTALL__ = (cssText, artDataUrl, rawConfig) => {
   const STATE_KEY = "__CODEX_DREAM_SKIN_STATE__";
   const STYLE_ID = "codex-dream-skin-style";
   const CHROME_ID = "codex-dream-skin-chrome";
