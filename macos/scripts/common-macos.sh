@@ -88,6 +88,7 @@ write_operation_state() {
   local message="${2:-}"
   local operation_token="${3:-}"
   local terminal_policy="${4:-match}"
+  local presentation="${5:-all}"
   local token_guarded="false"
   local current_token=""
   local current_status=""
@@ -106,6 +107,7 @@ write_operation_state() {
     *) return 1 ;;
   esac
   case "$terminal_policy" in match|idle) ;; *) return 1 ;; esac
+  case "$presentation" in all|errors-only) ;; *) return 1 ;; esac
   case "$message" in *$'\n'*|*$'\r'*) return 1 ;; esac
   [ "${#message}" -le 240 ] || return 1
   if [ -n "$operation_token" ]; then
@@ -158,6 +160,7 @@ write_operation_state() {
       || ! /usr/bin/plutil -insert status -string "$status" "$temporary" >/dev/null 2>&1 \
       || ! /usr/bin/plutil -insert message -string "$message" "$temporary" >/dev/null 2>&1 \
       || ! /usr/bin/plutil -insert operationToken -string "$operation_token" "$temporary" >/dev/null 2>&1 \
+      || ! /usr/bin/plutil -insert presentation -string "$presentation" "$temporary" >/dev/null 2>&1 \
       || ! /usr/bin/plutil -insert updatedAt -integer "$updated_at" "$temporary" >/dev/null 2>&1; then
       /bin/rm -f "$temporary"
       result=1
@@ -781,6 +784,8 @@ hot_reapply_theme() {
   local port="${1:-9341}"
   local timeout_ms="${2:-8000}"
   local operation_token="${3:-}"
+  local presentation="${4:-all}"
+  local manage_operation_state="${5:-true}"
   local operation_args=()
   local inj_pid=""
   local injector_protocol=""
@@ -792,9 +797,20 @@ hot_reapply_theme() {
   # endpoint already verified as belonging to the official Codex process.
   ensure_node_runtime || return 1
   verified_cdp_endpoint "$port" || return 1
+  case "$presentation" in all|errors-only|none) ;; *) return 1 ;; esac
+  case "$manage_operation_state" in true|false) ;; *) return 1 ;; esac
   [ -n "$operation_token" ] || operation_token="$(new_operation_token)"
-  write_operation_state applying "正在应用已选主题" "$operation_token" || return 1
-  operation_args=(--operation-token "$operation_token")
+  if [ "$manage_operation_state" = "true" ]; then
+    [ "$presentation" != "none" ] || return 1
+    write_operation_state applying "正在应用已选主题" "$operation_token" match "$presentation" \
+      || return 1
+  else
+    operation_token_is_valid "$operation_token" || return 1
+  fi
+  operation_args=(
+    --operation-token "$operation_token"
+    --operation-presentation "$presentation"
+  )
 
   injector_protocol="$(state_field injectorProtocol 2>/dev/null || true)"
   injector_mode="$(state_field injectorMode 2>/dev/null || true)"
@@ -812,7 +828,9 @@ hot_reapply_theme() {
   if [ -n "$inj_pid" ] && /bin/kill -0 "$inj_pid" 2>/dev/null \
     && [ "$injector_mode" != "control" ]; then
     mark_state_active || return 1
-    write_operation_state success "皮肤已应用" "$operation_token" || return 1
+    if [ "$manage_operation_state" = "true" ]; then
+      write_operation_state success "皮肤已应用" "$operation_token" match "$presentation" || return 1
+    fi
     return 0
   fi
   stop_recorded_injector 2>/dev/null || return 1
@@ -822,7 +840,9 @@ hot_reapply_theme() {
   codex_pid="$(codex_main_pids 2>/dev/null | /usr/bin/head -n 1)"
   [ -n "$started_at" ] || started_at="$(/bin/date)"
   write_state "$port" "$inj_pid" "$started_at" "${codex_pid:-0}" active
-  write_operation_state success "皮肤已应用" "$operation_token" || return 1
+  if [ "$manage_operation_state" = "true" ]; then
+    write_operation_state success "皮肤已应用" "$operation_token" match "$presentation" || return 1
+  fi
   return 0
 }
 

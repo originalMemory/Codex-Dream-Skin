@@ -18,6 +18,9 @@ SAFE_AREA="auto"
 TASK_MODE="auto"
 FOCUS_X=""
 FOCUS_Y=""
+OPERATION_TOKEN=""
+OPERATION_PRESENTATION="all"
+OPERATION_STATE_OWNER="self"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -33,6 +36,9 @@ while [ "$#" -gt 0 ]; do
     --transient) SAVE_THEME="false"; shift ;;
     --quiet) QUIET="true"; shift ;;
     --no-start) ALLOW_START="false"; shift ;;
+    --operation-token) OPERATION_TOKEN="${2:-}"; shift 2 ;;
+    --operation-presentation) OPERATION_PRESENTATION="${2:-}"; shift 2 ;;
+    --operation-state-owner) OPERATION_STATE_OWNER="${2:-}"; shift 2 ;;
     *) fail "Unknown argument: $1" ;;
   esac
 done
@@ -40,6 +46,11 @@ done
 case "$APPEARANCE" in auto|light|dark) ;; *) fail "Invalid appearance: $APPEARANCE" ;; esac
 case "$SAFE_AREA" in auto|left|right|center|none) ;; *) fail "Invalid safe area: $SAFE_AREA" ;; esac
 case "$TASK_MODE" in auto|ambient|banner|off) ;; *) fail "Invalid task mode: $TASK_MODE" ;; esac
+case "$OPERATION_PRESENTATION" in all|errors-only|none) ;; *) fail "Invalid operation presentation." ;; esac
+case "$OPERATION_STATE_OWNER" in self|caller) ;; *) fail "Invalid operation state owner." ;; esac
+if [ "$OPERATION_STATE_OWNER" = "caller" ]; then
+  operation_token_is_valid "$OPERATION_TOKEN" || fail "Caller-managed operation requires a valid token."
+fi
 
 ensure_state_root
 IMAGES_DIR="$STATE_ROOT/images"
@@ -89,7 +100,9 @@ ensure_node_runtime
 image_name="background.jpg"
 temporary="$THEME_DIR/.background.$$.tmp.jpg"
 prepared="$THEME_DIR/$image_name"
-cleanup_temporary() { /bin/rm -f "$temporary"; }
+cleanup_temporary() {
+  /bin/rm -f "$temporary"
+}
 trap cleanup_temporary EXIT
 
 # Prefer copying already-JPEG; sips only when needed (large PNG conversion is the slow part)
@@ -125,7 +138,6 @@ theme_args=(
 [ -n "$FOCUS_Y" ] && theme_args+=(--focus-y "$FOCUS_Y")
 "$NODE" "$SCRIPT_DIR/write-theme.mjs" "${theme_args[@]}" >/dev/null
 /usr/bin/find "$THEME_DIR" -maxdepth 1 -type f -name 'background.*' ! -name "$image_name" -delete
-trap - EXIT
 
 if [ "$SAVE_THEME" = "true" ]; then
   lib_dir="$THEMES_ROOT/$theme_id"
@@ -162,12 +174,16 @@ if [ "$ALLOW_START" != "true" ]; then
 fi
 
 progress "Hot reapply..."
-if hot_reapply_theme "$PORT" 8000; then
+manage_operation_state="true"
+[ "$OPERATION_STATE_OWNER" = "caller" ] && manage_operation_state="false"
+if hot_reapply_theme "$PORT" 8000 "$OPERATION_TOKEN" "$OPERATION_PRESENTATION" \
+  "$manage_operation_state"; then
   progress "Done: ${THEME_NAME}"
   exit 0
 fi
 
 if [ "$ALLOW_START" != "true" ]; then
+  [ "$OPERATION_STATE_OWNER" != "caller" ] || exit 1
   progress "Ready: ${THEME_NAME} (Codex not started)"
   exit 0
 fi

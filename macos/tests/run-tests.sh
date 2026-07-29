@@ -335,6 +335,8 @@ fi
 /usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
   "$ROOT/scripts/rotate-images-macos.sh" tick
 [ "$(/usr/bin/head -n1 "$ROTATE_STATE/rotation/current-image")" = 'a.png' ]
+[ "$(/usr/bin/plutil -extract status raw -o - "$ROTATE_STATE/operation-state.plist")" = 'success' ]
+[ "$(/usr/bin/plutil -extract presentation raw -o - "$ROTATE_STATE/operation-state.plist")" = 'errors-only' ]
 [ -f "$ROTATE_STATE/theme/theme.json" ]
 [ -z "$(/usr/bin/find "$ROTATE_STATE/themes" -mindepth 1 -maxdepth 1 -type d -print -quit)" ]
 /usr/bin/printf '0\n' > "$ROTATE_STATE/rotation/last-change"
@@ -349,6 +351,8 @@ fi
 ROTATION_STATUS="$(/usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
   "$ROOT/scripts/rotate-images-macos.sh" status)"
 /usr/bin/grep -F -q 'error=No usable image could be applied.' <<< "$ROTATION_STATUS"
+[ "$(/usr/bin/plutil -extract status raw -o - "$ROTATE_STATE/operation-state.plist")" = 'failed' ]
+[ "$(/usr/bin/plutil -extract presentation raw -o - "$ROTATE_STATE/operation-state.plist")" = 'errors-only' ]
 /usr/bin/env HOME="$ROTATE_HOME" NODE="$NODE" \
   "$ROOT/scripts/rotate-images-macos.sh" start
 [ "$(/usr/bin/find "$ROTATE_STATE" -maxdepth 1 -name '.rotation-tick.lock' -print -quit)" = '' ]

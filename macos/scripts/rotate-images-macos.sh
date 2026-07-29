@@ -104,7 +104,7 @@ tick_rotation() {
   if ! /bin/mkdir "$LOCK_DIR" 2>/dev/null; then return 0; fi
   trap '/bin/rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
-  local interval now last count current index name offset candidate start_index
+  local interval now last count current index name offset candidate start_index operation_token
   local images=()
   interval="$(read_interval)"
   now="$(/bin/date '+%s')"
@@ -119,6 +119,9 @@ tick_rotation() {
     write_value "$LAST_PATH" "$now"
     return 0
   fi
+  operation_token="$(new_operation_token)"
+  write_operation_state applying "正在自动换图" "$operation_token" match errors-only \
+    || fail "Could not publish the automatic rotation state."
   current=""
   [ -f "$CURRENT_PATH" ] && current="$(/usr/bin/head -n1 "$CURRENT_PATH" 2>/dev/null || true)"
   start_index="0"
@@ -131,17 +134,26 @@ tick_rotation() {
   for ((offset = 0; offset < count; offset += 1)); do
     candidate="${images[$(((start_index + offset) % count))]}"
     [ "$candidate" = "$current" ] && continue
-    [ -f "$ENABLED_PATH" ] || return 0
+    if [ ! -f "$ENABLED_PATH" ]; then
+      write_operation_state cancelled "自动换图已停止" "$operation_token" match errors-only || true
+      return 0
+    fi
     if "$SCRIPT_DIR/load-image-theme-macos.sh" --from-library "$candidate" \
-      --transient --quiet --no-start >/dev/null 2>&1; then
+      --transient --quiet --no-start \
+      --operation-token "$operation_token" \
+      --operation-presentation none \
+      --operation-state-owner caller >/dev/null 2>&1; then
       write_value "$CURRENT_PATH" "$candidate"
       /bin/rm -f "$ERROR_PATH"
       write_value "$LAST_PATH" "$now"
+      write_operation_state success "自动换图完成" "$operation_token" match errors-only
       return 0
     fi
   done
   write_value "$ERROR_PATH" "No usable image could be applied."
   write_value "$LAST_PATH" "$now"
+  write_operation_state failed "自动换图失败：没有可用图片" \
+    "$operation_token" match errors-only
 }
 
 prompt_interval() {

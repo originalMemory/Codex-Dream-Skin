@@ -52,6 +52,7 @@ const OPERATION_UI_HOST_ID = "chatgpt-dream-skin-operation";
 const OPERATION_UI_REGISTRY_KEY = "__CHATGPT_DREAM_SKIN_OPERATION_UI__";
 const OPERATION_KINDS = new Set(["apply", "pause", "switch"]);
 const OPERATION_UI_STATES = new Set(["success", "error", "cancelled"]);
+const OPERATION_PRESENTATIONS = new Set(["all", "errors-only", "none"]);
 const MIN_RENDERER_WIDTH = 320;
 const MIN_RENDERER_HEIGHT = 240;
 const MAX_RENDERER_DIMENSION = 65536;
@@ -287,6 +288,7 @@ function parseArgs(argv) {
     operationUiState: null,
     operationMessage: null,
     operationToken: null,
+    operationPresentation: "all",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -307,6 +309,7 @@ function parseArgs(argv) {
     else if (arg === "--operation-ui-state") options.operationUiState = argv[++i];
     else if (arg === "--operation-message") options.operationMessage = argv[++i];
     else if (arg === "--operation-token") options.operationToken = argv[++i];
+    else if (arg === "--operation-presentation") options.operationPresentation = argv[++i];
     else if (arg === "--reload") options.reload = true;
     else throw new Error(`Unknown argument: ${arg}`);
   }
@@ -318,6 +321,9 @@ function parseArgs(argv) {
   }
   if (options.operationToken !== null && !/^\d{1,12}:\d{13}:\d{1,8}$/.test(options.operationToken)) {
     throw new Error("Invalid operation token");
+  }
+  if (!OPERATION_PRESENTATIONS.has(options.operationPresentation)) {
+    throw new Error("Invalid operation presentation");
   }
   if (options.mode === "begin-operation" && !OPERATION_KINDS.has(options.operationKind)) {
     throw new Error("Begin operation requires --operation-kind apply, pause, or switch");
@@ -347,9 +353,19 @@ function validatedDebuggerUrl(target, port) {
   return url.href;
 }
 
+export function isEligibleAppTargetUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "app:" &&
+      url.searchParams.get("initialRoute") !== "/avatar-overlay";
+  } catch {
+    return false;
+  }
+}
+
 function isValidCdpPageTarget(item, port) {
   if (
-    item?.type !== "page" || !item.url?.startsWith("app://")
+    item?.type !== "page" || !isEligibleAppTargetUrl(item.url)
     || typeof item.id !== "string" || !CDP_ID_PATTERN.test(item.id)
     || !item.webSocketDebuggerUrl
   ) return false;
@@ -1245,6 +1261,11 @@ function operationKindMessage(kind) {
   return "正在应用皮肤…";
 }
 
+export function operationPresentationAllows(presentation, state) {
+  const normalized = OPERATION_PRESENTATIONS.has(presentation) ? presentation : "all";
+  return normalized !== "none" && (normalized === "all" || state === "error");
+}
+
 async function runBeginOperation(options) {
   const connected = await connectCodexTargets(options.port, options.timeoutMs);
   const operationToken = options.operationToken ?? nextOperationToken();
@@ -1292,9 +1313,11 @@ async function runOneShot(options) {
     const message = options.mode === "remove" ? "正在暂停皮肤…" : "正在准备皮肤…";
     const action = options.operationToken ? presentOperationUi : (session, token, state, text) =>
       bestEffortOperationUi(session, "show", token, state, text);
-    await Promise.all(connected.map(({ session }) => action(
-      session, operationToken, "loading", message,
-    )));
+    if (operationPresentationAllows(options.operationPresentation, "loading")) {
+      await Promise.all(connected.map(({ session }) => action(
+        session, operationToken, "loading", message,
+      )));
+    }
   }
   let loaded = null;
   try {
@@ -1302,7 +1325,7 @@ async function runOneShot(options) {
       ? await loadPayload(options.themeDir)
       : null;
   } catch (error) {
-    if (operationToken) {
+    if (operationToken && operationPresentationAllows(options.operationPresentation, "error")) {
       await Promise.all(connected.map(({ session }) => presentOperationUi(
         session, operationToken, "error", "皮肤准备失败",
       )));
@@ -1318,9 +1341,11 @@ async function runOneShot(options) {
     try {
       if (options.mode === "remove") await removeFromSession(session);
       else if (options.mode === "once") {
-        await bestEffortOperationUi(
-          session, "update", operationToken, "loading", `正在应用「${loaded.theme.name}」…`,
-        );
+        if (operationPresentationAllows(options.operationPresentation, "loading")) {
+          await bestEffortOperationUi(
+            session, "update", operationToken, "loading", `正在应用「${loaded.theme.name}」…`,
+          );
+        }
         await applyToSession(session, payload);
       }
 
@@ -1328,7 +1353,8 @@ async function runOneShot(options) {
         await session.send("Page.reload", { ignoreCache: true });
         await new Promise((resolve) => setTimeout(resolve, 1600));
         if (options.mode !== "remove") {
-          if (operationToken) {
+          if (operationToken &&
+              operationPresentationAllows(options.operationPresentation, "loading")) {
             await presentOperationUi(
               session, operationToken, "loading", `正在应用「${loaded.theme.name}」…`,
             );
@@ -1337,7 +1363,7 @@ async function runOneShot(options) {
         }
       }
 
-      if (operationToken) {
+      if (operationToken && operationPresentationAllows(options.operationPresentation, "loading")) {
         await presentOperationUi(
           session,
           operationToken,
@@ -1356,14 +1382,17 @@ async function runOneShot(options) {
       results.push({ targetId: target.id, markers: probe?.markers, result });
       if (operationToken) {
         const passed = options.mode === "remove" ? result === true : result?.pass;
-        await presentOperationUi(
-          session,
-          operationToken,
-          passed ? "success" : "error",
-          passed
-            ? options.mode === "remove" ? "皮肤已暂停" : `已应用「${loaded.theme.name}」`
-            : options.mode === "remove" ? "暂停校验失败" : "显示校验失败",
-        );
+        const state = passed ? "success" : "error";
+        if (operationPresentationAllows(options.operationPresentation, state)) {
+          await presentOperationUi(
+            session,
+            operationToken,
+            state,
+            passed
+              ? options.mode === "remove" ? "皮肤已暂停" : `已应用「${loaded.theme.name}」`
+              : options.mode === "remove" ? "暂停校验失败" : "显示校验失败",
+          );
+        }
       }
 
       if (options.screenshot && !screenshotCaptured) {
@@ -1374,7 +1403,7 @@ async function runOneShot(options) {
         screenshotCaptured = true;
       }
     } catch (error) {
-      if (operationToken) {
+      if (operationToken && operationPresentationAllows(options.operationPresentation, "error")) {
         await presentOperationUi(
           session,
           operationToken,
@@ -1475,6 +1504,9 @@ async function readOperationState(statePath) {
     token: String(parsed.operationToken || ""),
     status: String(parsed.status || ""),
     message: String(parsed.message || "").slice(0, 240),
+    presentation: OPERATION_PRESENTATIONS.has(parsed.presentation)
+      ? parsed.presentation
+      : "all",
     updatedAt: Number(parsed.updatedAt || 0),
   };
 }
@@ -1518,7 +1550,8 @@ async function watchOperationState(statePath, onState) {
     try {
       const operation = await readOperationState(statePath);
       if (!/^\d{1,12}:\d{13}:\d{1,8}$/.test(operation.token)) return;
-      const snapshotKey = `${operation.token}:${operation.status}:${operation.updatedAt}`;
+      const snapshotKey =
+        `${operation.token}:${operation.status}:${operation.presentation}:${operation.updatedAt}`;
       if (snapshotKey === lastSnapshotKey) return;
       lastSnapshotKey = snapshotKey;
       await onState(operation);
@@ -1569,8 +1602,11 @@ async function runWatch(options) {
   let reloadChain = Promise.resolve();
   let discoveryDelayMs = 100;
   let lastListErrorAt = 0;
+  let nextSessionAuditAt = 0;
   let operationSignalChain = Promise.resolve();
   let activeOperation = null;
+  let pendingRefreshOperation = null;
+  let payloadRefreshPending = false;
   let pauseRecovery = null;
   let controlOnly = false;
   let mutationEpoch = 0;
@@ -1703,7 +1739,25 @@ async function runWatch(options) {
     wakeControlLoop();
   };
 
+  const pruneInvalidSessions = async () => {
+    for (const [id, record] of sessions) {
+      if (!record.verified || record.session.closed) continue;
+      const probe = await waitForCodexProbe(record.session, 500).catch(() => null);
+      if (probe?.codex) continue;
+      record.verified = false;
+      await removeFromSession(record.session).catch(() => false);
+      await removeEarly(record).catch(() => false);
+      record.session.close();
+      sessions.delete(id);
+      console.log(`[dream-skin] released target that no longer matches the ChatGPT shell: ${id}`);
+    }
+  };
+
   const refreshPayload = async () => {
+    await pruneInvalidSessions();
+    const refreshOperation = activeOperation ?? pendingRefreshOperation;
+    pendingRefreshOperation = null;
+    payloadRefreshPending = false;
     const refreshEpoch = mutationEpoch;
     let next;
     try {
@@ -1711,16 +1765,20 @@ async function runWatch(options) {
     } catch (error) {
       await Promise.all([...sessions.values()].map(async (record) => {
         if (record.session.closed) return;
-        const externalOperation = activeOperation;
+        const externalOperation = refreshOperation;
         const operationToken = externalOperation?.token ?? nextOperationToken();
+        const presentation = externalOperation?.presentation ?? "all";
+        const state = externalOperation ? "loading" : "error";
         record.operationToken = operationToken;
         record.operationExternal = Boolean(externalOperation);
-        await presentOperationUi(
-          record.session,
-          operationToken,
-          externalOperation ? "loading" : "error",
-          externalOperation ? "正在准备主题…" : "主题读取失败，当前皮肤未改变",
-        );
+        if (operationPresentationAllows(presentation, state)) {
+          await presentOperationUi(
+            record.session,
+            operationToken,
+            state,
+            externalOperation ? "正在准备主题…" : "主题读取失败，当前皮肤未改变",
+          );
+        }
       }));
       throw error;
     }
@@ -1733,15 +1791,18 @@ async function runWatch(options) {
     }
     for (const record of sessions.values()) {
       const { session } = record;
-      if (session.closed) continue;
-      const externalOperation = activeOperation;
+      if (!record.verified || session.closed) continue;
+      const externalOperation = refreshOperation;
       const operationToken = externalOperation?.token ?? nextOperationToken();
+      const presentation = externalOperation?.presentation ?? "all";
       record.operationToken = operationToken;
       record.operationExternal = Boolean(externalOperation);
       try {
-        await presentOperationUi(
-          session, operationToken, "loading", `正在应用「${current.theme.name}」…`,
-        );
+        if (operationPresentationAllows(presentation, "loading")) {
+          await presentOperationUi(
+            session, operationToken, "loading", `正在应用「${current.theme.name}」…`,
+          );
+        }
         if (controlOnly || mutationEpoch !== refreshEpoch) continue;
         const updatedInPlace = !staticChanged &&
           await applyThemeUpdateToSession(session, current).catch(() => false);
@@ -1768,7 +1829,8 @@ async function runWatch(options) {
           current.revision,
         );
         if (!verification?.pass) throw new Error("Theme refresh verification failed");
-        if (!externalOperation) {
+        if (!externalOperation &&
+            operationPresentationAllows(presentation, "success")) {
           await presentOperationUi(session, operationToken, "success", `已应用「${current.theme.name}」`);
         }
       } catch (error) {
@@ -1784,6 +1846,8 @@ async function runWatch(options) {
 
   const queuePayloadRefresh = ({ staticChanged = false } = {}) => {
     if (staticChanged) invalidateStaticPayloadAssets();
+    payloadRefreshPending = true;
+    if (activeOperation) pendingRefreshOperation = activeOperation;
     if (reloadTimer) clearTimeout(reloadTimer);
     reloadTimer = setTimeout(() => {
       reloadTimer = null;
@@ -1798,6 +1862,7 @@ async function runWatch(options) {
       const previousOperation = activeOperation?.token === operation.token ? activeOperation : null;
       const busy = isFreshBusyOperation(operation);
       if (pauseRecovery && pauseRecovery.token !== operation.token) pauseRecovery = null;
+      if (payloadRefreshPending) pendingRefreshOperation = operation;
       if (busy) {
         activeOperation = operation;
         wakeControlLoop();
@@ -1817,26 +1882,34 @@ async function runWatch(options) {
           const kind = operation.status === "pausing" ? "pause" : "apply";
           record.operationToken = operation.token;
           record.operationExternal = true;
-          await presentOperationUi(
-            record.session,
-            operation.token,
-            "loading",
-            operationKindMessage(kind),
-            1000,
-          );
+          if (operationPresentationAllows(operation.presentation, "loading")) {
+            await presentOperationUi(
+              record.session,
+              operation.token,
+              "loading",
+              operationKindMessage(kind),
+              1000,
+            );
+          }
           return;
         }
-        if (record.operationToken !== operation.token) return;
         const state = operation.status === "failed" ? "error"
           : operation.status === "cancelled" ? "cancelled"
             : operation.status === "success" || operation.status === "paused" ? "success" : null;
         if (!state) return;
-        await presentOperationUi(
-          record.session,
-          operation.token,
-          state,
-          operation.message || (state === "error" ? "操作失败，请重试" : "操作已完成"),
-        );
+        if (record.operationToken !== operation.token) {
+          if (state !== "error" || operation.presentation !== "errors-only") return;
+          record.operationToken = operation.token;
+          record.operationExternal = true;
+        }
+        if (operationPresentationAllows(operation.presentation, state)) {
+          await presentOperationUi(
+            record.session,
+            operation.token,
+            state,
+            operation.message || (state === "error" ? "操作失败，请重试" : "操作已完成"),
+          );
+        }
       }));
       if (busy && operation.status === "pausing") {
         await reloadChain.catch(() => {});
@@ -1886,6 +1959,10 @@ async function runWatch(options) {
         await waitForControlOperation();
         continue;
       }
+      if (Date.now() >= nextSessionAuditAt) {
+        await pruneInvalidSessions();
+        nextSessionAuditAt = Date.now() + 30000;
+      }
       let targets = [];
       try {
         targets = await listAppTargets(options.port);
@@ -1927,6 +2004,7 @@ async function runWatch(options) {
         let record;
         let connectionEpoch;
         let recoveryOperation = cycleRecovery;
+        let presentation = "all";
         beginTargetSetup();
         try {
           session = await connectTarget(target, options.port);
@@ -1937,6 +2015,7 @@ async function runWatch(options) {
             needsLoadFallback: false,
             operationToken: null,
             operationExternal: false,
+            verified: false,
           };
           connectionEpoch = mutationEpoch;
           sessions.set(target.id, record);
@@ -1976,6 +2055,7 @@ async function runWatch(options) {
             continue;
           }
           rejected.delete(target.id);
+          record.verified = true;
           if (controlOnly || pausing || mutationEpoch !== connectionEpoch) {
             await invalidateEarly(record);
           }
@@ -1987,16 +2067,19 @@ async function runWatch(options) {
             ?? recoveryOperation?.token
             ?? nextOperationToken();
           record.operationExternal = Boolean(initialOperation || recoveryOperation);
-          await presentOperationUi(
-            session,
-            record.operationToken,
-            "loading",
-            initialOperation
-              ? operationKindMessage(initialOperation.status === "pausing" ? "pause" : "apply")
-              : recoveryOperation
-                ? "暂停未完成，正在恢复原皮肤…"
-              : `正在应用「${current.theme.name}」…`,
-          );
+          presentation = initialOperation?.presentation ?? "all";
+          if (operationPresentationAllows(presentation, "loading")) {
+            await presentOperationUi(
+              session,
+              record.operationToken,
+              "loading",
+              initialOperation
+                ? operationKindMessage(initialOperation.status === "pausing" ? "pause" : "apply")
+                : recoveryOperation
+                  ? "暂停未完成，正在恢复原皮肤…"
+                : `正在应用「${current.theme.name}」…`,
+            );
+          }
           if (controlOnly || pausing) {
             continue;
           }
@@ -2034,7 +2117,8 @@ async function runWatch(options) {
               1000,
             );
             recoveredPauseThisCycle = true;
-          } else if (!record.operationExternal) {
+          } else if (!record.operationExternal &&
+              operationPresentationAllows(presentation, "success")) {
             await presentOperationUi(
               session, record.operationToken, "success", `已应用「${current.theme.name}」`,
             );

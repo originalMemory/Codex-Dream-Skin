@@ -1,5 +1,76 @@
 # Task Progress
 
+Updated: 2026-07-29 15:09 CST (Asia/Shanghai)
+
+## macOS Renderer Memory Investigation
+
+- [diagnosed] The ~3.8–4.0 GiB process is the hidden
+  `app://-/index.html?initialRoute=/avatar-overlay` renderer, not the visible
+  Codex window.
+- [evidence] CDP reports 3.69 GiB live JS heap for the hidden target versus
+  about 396 MiB for the visible target. The hidden document has only 424 DOM
+  nodes but is marked with the active Dream Skin theme and retains an injector
+  CDP session.
+- [root cause] Target discovery initially accepts any `app://` page and keeps a
+  session after the one-time shell probe. The transient avatar overlay can pass
+  during startup, then remains subscribed to every 60-second image refresh even
+  after it no longer contains shell markers.
+- [evidence] One sampled rotation on the hidden target allocated about 246 MiB
+  through the V8 API plus image-analysis allocations. Its heap remained around
+  3.6 GiB after reclaiming about 164 MiB during the sample.
+- [scope] No code, runtime state, process, or installation was changed during
+  diagnosis; implementation started only after the root cause was confirmed.
+- [initial deployment note] `/Applications/Codex Dream Skin.app` contained the
+  current source injector, but the deployed `~/.codex/.../injector.mjs`
+  initially differed because both bundles reported version 1.5.6 and the App
+  did not reinstall equal-version engine content. Both copies already contained
+  the in-place image update path, so this mismatch was not the direct cause of
+  the 4 GiB heap.
+- [implemented] Exclude the avatar overlay by URL, revalidate retained sessions
+  before image refreshes and every 30 seconds, then rebuild and manually replace
+  the equal-version local engine without adding one-off compatibility logic.
+- [verified] Focused Node/shell checks, `git diff --check`, the complete macOS
+  suite with Doctor skipped, arm64 App build, and strict codesign validation
+  pass.
+- [deployed files] `/Applications/Codex Dream Skin.app`, the bundled injector,
+  the deployed `~/.codex` injector, and the working source now have the same
+  SHA-256. Previous App and engine copies are recoverable from Trash.
+- [pending runtime verification] Codex remains open for the user's other work.
+  The old watcher and menu App are stopped. After Codex exits, rerun the bundled
+  installer and restart the App/Codex before validating target exclusion and
+  memory behavior.
+
+Updated: 2026-07-28 16:20 CST (Asia/Shanghai)
+
+## macOS Automatic Rotation Prompt Fix
+
+- [implemented] Branch `feat/immersive-wallpaper-rotation`: scheduled
+  image rotation silent on successful switches while retaining a visible
+  failure prompt.
+- [root cause] `--quiet` suppresses shell notifications only. The hot reapply
+  path still writes a foreground operation state and passes its token to both
+  the one-shot injector and watcher, so the renderer shows loading/success UI
+  for every scheduled image.
+- [verified] Added an errors-only operation presentation mode before watched
+  theme files change. Focused policy/state tests, shell and Node syntax, the
+  complete macOS suite with device Doctor skipped, Swift tests, signed-runtime
+  integrations, arm64 App build, codesign, and bundled-script hash checks pass.
+- [review] The first implementation scoped operation state to each candidate
+  image and could report a recoverable candidate failure or lose the silent
+  policy before a delayed watcher refresh. Do not install that build.
+- [implemented] Operation ownership now spans one full rotation tick.
+  Candidate attempts use presentation `none`; only the final failed state uses
+  the visible errors-only policy.
+- [implemented] Queued watcher refreshes retain the operation policy even after
+  a fast terminal state clears the active operation. A final failure is still
+  surfaced if the watcher missed the short applying state.
+- [verified] Shell and Node syntax, focused presentation tests, the complete
+  macOS suite (`CODEX_DREAM_SKIN_SKIP_DOCTOR=1 npm test`), arm64 app build,
+  strict codesign validation, bundle version/architecture, bundled-script
+  equality, and `git diff --check` pass.
+- [artifact] The rebuilt local app is
+  `macos/release/Codex Dream Skin.app`.
+
 Updated: 2026-07-25 08:31 HKT (Asia/Hong_Kong)
 
 ## v1.5.1 Version Release (2026-07-25 08:28 HKT)

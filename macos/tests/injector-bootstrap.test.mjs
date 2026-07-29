@@ -3,11 +3,25 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
-import { applyThemeUpdateToSession, earlyPayloadFor } from "../scripts/injector.mjs";
+import {
+  applyThemeUpdateToSession,
+  earlyPayloadFor,
+  isEligibleAppTargetUrl,
+  operationPresentationAllows,
+} from "../scripts/injector.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const injectorPath = path.resolve(here, "../scripts/injector.mjs");
 const source = await fs.readFile(injectorPath, "utf8");
+const commonSource = await fs.readFile(path.resolve(here, "../scripts/common-macos.sh"), "utf8");
+const loadImageSource = await fs.readFile(
+  path.resolve(here, "../scripts/load-image-theme-macos.sh"),
+  "utf8",
+);
+const rotateSource = await fs.readFile(
+  path.resolve(here, "../scripts/rotate-images-macos.sh"),
+  "utf8",
+);
 
 function createFixture() {
   const domReady = [];
@@ -109,6 +123,43 @@ assert.doesNotMatch(
   "Image bytes must travel as CDP arguments, never JavaScript source.",
 );
 assert.equal(updateCalls.at(-1).method, "Runtime.releaseObject");
+
+assert.equal(operationPresentationAllows("all", "loading"), true);
+assert.equal(operationPresentationAllows("all", "success"), true);
+assert.equal(operationPresentationAllows("errors-only", "loading"), false);
+assert.equal(operationPresentationAllows("errors-only", "success"), false);
+assert.equal(operationPresentationAllows("errors-only", "error"), true);
+assert.equal(operationPresentationAllows("none", "loading"), false);
+assert.equal(operationPresentationAllows("none", "success"), false);
+assert.equal(operationPresentationAllows("none", "error"), false);
+assert.equal(isEligibleAppTargetUrl("app://-/index.html"), true);
+assert.equal(
+  isEligibleAppTargetUrl("app://-/index.html?initialRoute=%2Favatar-overlay"),
+  false,
+);
+assert.equal(isEligibleAppTargetUrl("https://example.com/index.html"), false);
+assert.match(
+  commonSource,
+  /--operation-presentation "\$presentation"/,
+  "Hot reapply must pass its presentation policy into the one-shot injector.",
+);
+assert.match(
+  loadImageSource,
+  /--operation-state-owner\) OPERATION_STATE_OWNER=/,
+  "Image loads must support a caller-owned operation lifecycle.",
+);
+assert.ok(
+  rotateSource.indexOf('write_operation_state applying "正在自动换图"') <
+    rotateSource.indexOf('"$SCRIPT_DIR/load-image-theme-macos.sh" --from-library "$candidate"'),
+  "Automatic rotation must publish one operation before trying candidate images.",
+);
+assert.match(rotateSource, /--operation-presentation none/);
+assert.match(rotateSource, /--operation-state-owner caller/);
+assert.match(
+  source,
+  /const refreshPayload = async \(\) => \{\s+await pruneInvalidSessions\(\);/,
+  "Watcher must revalidate retained targets before transferring a new image.",
+);
 
 const earlyStart = source.indexOf("export function earlyPayloadFor");
 const earlySource = source.slice(earlyStart, earlyStart + 2200);
