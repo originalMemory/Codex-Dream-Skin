@@ -62,6 +62,18 @@ list_images() {
   done | LC_ALL=C /usr/bin/sort -f
 }
 
+rotation_renderer_visible() {
+  local port="9341"
+  local session=""
+  local saved_port=""
+  ensure_node_runtime
+  [ -f "$STATE_PATH" ] && session="$(state_field session 2>/dev/null || true)"
+  [ "$session" = "active" ] || return 1
+  saved_port="$(state_field port 2>/dev/null || true)"
+  [ -n "$saved_port" ] && port="$saved_port"
+  "$NODE" "$INJECTOR" --check-visible --port "$port" --timeout-ms 1500 >/dev/null 2>&1
+}
+
 status_rotation() {
   local enabled="false"
   local current=""
@@ -104,7 +116,8 @@ tick_rotation() {
   if ! /bin/mkdir "$LOCK_DIR" 2>/dev/null; then return 0; fi
   trap '/bin/rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
-  local interval now last count current index name offset candidate start_index operation_token
+  local interval now last count current index name offset candidate start_index operation_token session
+  local candidate_status
   local images=()
   interval="$(read_interval)"
   now="$(/bin/date '+%s')"
@@ -118,6 +131,13 @@ tick_rotation() {
   if [ "$count" -lt 2 ]; then
     write_value "$LAST_PATH" "$now"
     return 0
+  fi
+  if [ -f "$STATE_PATH" ]; then
+    session="$(state_field session 2>/dev/null || true)"
+    if [ "$session" = "active" ] && ! rotation_renderer_visible; then
+      write_value "$LAST_PATH" "$now"
+      return 0
+    fi
   fi
   operation_token="$(new_operation_token)"
   write_operation_state applying "正在自动换图" "$operation_token" match errors-only \
@@ -138,6 +158,7 @@ tick_rotation() {
       write_operation_state cancelled "自动换图已停止" "$operation_token" match errors-only || true
       return 0
     fi
+    candidate_status="0"
     if "$SCRIPT_DIR/load-image-theme-macos.sh" --from-library "$candidate" \
       --transient --quiet --no-start \
       --operation-token "$operation_token" \
@@ -147,6 +168,20 @@ tick_rotation() {
       /bin/rm -f "$ERROR_PATH"
       write_value "$LAST_PATH" "$now"
       write_operation_state success "自动换图完成" "$operation_token" match errors-only
+      return 0
+    else
+      candidate_status="$?"
+    fi
+    if [ "$candidate_status" -eq 2 ]; then
+      write_value "$LAST_PATH" "$now"
+      if rotation_renderer_visible; then
+        write_value "$ERROR_PATH" "Theme renderer failed while applying an image."
+        write_operation_state failed "自动换图失败：显示校验未通过" \
+          "$operation_token" match errors-only
+      else
+        write_operation_state cancelled "自动换图已延后" \
+          "$operation_token" match errors-only
+      fi
       return 0
     fi
   done

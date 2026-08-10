@@ -187,7 +187,7 @@ if hot_reapply_theme "$PORT" 8000 "$OPERATION_TOKEN" "$OPERATION_PRESENTATION" \
 fi
 
 if [ "$ALLOW_START" != "true" ]; then
-  [ "$OPERATION_STATE_OWNER" != "caller" ] || exit 1
+  [ "$OPERATION_STATE_OWNER" != "caller" ] || exit 2
   progress "Ready: ${THEME_NAME} (Codex not started)"
   exit 0
 fi

@@ -88,6 +88,7 @@ fi
 RUNTIME_SCRIPTS=(
   apply-from-menubar-macos.sh
   apply-community-theme-macos.sh
+  check-image-dimensions.mjs
   check-update-macos.sh
   common-macos.sh
   customize-theme-macos.sh

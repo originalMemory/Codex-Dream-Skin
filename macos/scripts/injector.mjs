@@ -309,6 +309,7 @@ function parseArgs(argv) {
     else if (arg === "--once") options.mode = "once";
     else if (arg === "--watch") options.mode = "watch";
     else if (arg === "--verify") options.mode = "verify";
+    else if (arg === "--check-visible") options.mode = "check-visible";
     else if (arg === "--remove") options.mode = "remove";
     else if (arg === "--begin-operation") options.mode = "begin-operation";
     else if (arg === "--finish-operation") options.mode = "finish-operation";
@@ -374,6 +375,10 @@ export function isEligibleAppTargetUrl(value) {
   } catch {
     return false;
   }
+}
+
+export function rendererVisibilityAllowsRotation(value) {
+  return value === "visible";
 }
 
 function isValidCdpPageTarget(item, port) {
@@ -1369,6 +1374,29 @@ async function runFinishOperation(options) {
   if (!shown) throw new Error("Could not show the completed operation state in the verified ChatGPT renderer");
 }
 
+async function runCheckVisible(options) {
+  const connected = await connectCodexTargets(options.port, options.timeoutMs);
+  const targets = [];
+  try {
+    for (const { target, session } of connected) {
+      const visibility = await session.evaluate("document.visibilityState");
+      targets.push({ targetId: target.id, visibility });
+    }
+  } finally {
+    for (const { session } of connected) session.close();
+  }
+  const visible = targets.some(({ visibility }) =>
+    rendererVisibilityAllowsRotation(visibility));
+  console.log(JSON.stringify({
+    mode: options.mode,
+    version: SKIN_VERSION,
+    port: options.port,
+    visible,
+    targets,
+  }, null, 2));
+  if (!visible) process.exitCode = 2;
+}
+
 async function runOneShot(options) {
   const connected = await connectCodexTargets(options.port, options.timeoutMs);
   const operationToken = options.mode === "once" || options.mode === "remove"
@@ -2281,6 +2309,10 @@ if (path.resolve(process.argv[1] || "") === path.resolve(scriptPath)) {
       await runFinishOperation(options);
       await new Promise((resolve) => process.stdout.write("", resolve));
       process.exit(0);
+    } else if (options.mode === "check-visible") {
+      await runCheckVisible(options);
+      await new Promise((resolve) => process.stdout.write("", resolve));
+      process.exit(process.exitCode ?? 0);
     } else if (options.mode === "watch") await runWatch(options);
     else await runOneShotAndExit(options);
   } catch (error) {

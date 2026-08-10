@@ -1,19 +1,121 @@
 # Task Progress
 
+Updated: 2026-08-10 17:05 CST (Asia/Shanghai)
+
+## macOS Automatic Rotation No-op Investigation
+
+- [reproduced] Installed App and engine are both v1.5.12. Rotation reports
+  `enabled=true`, interval 60 seconds, and 20 eligible images, but repeated
+  menu-bar ticks do not update `last-change` or apply another image.
+- [trace] The App does launch `rotate-images-macos.sh tick` every 10 seconds.
+  Each tick reaches signed Node runtime discovery, then exits silently; the
+  renderer itself is visible and passes a direct read-only `--check-visible`.
+- [root cause] `rotation_renderer_visible` obtains session and port through
+  `$(state_field ...)`. `state_field` initializes `NODE`, but command
+  substitution runs in a child shell, so that assignment is lost. The
+  menu-bar App's clean environment has no preexisting `NODE`; expanding
+  `"$NODE"` therefore aborts under `set -u` before rotation state is updated.
+- [evidence] Reproducing the same function under ScriptRunner's clean
+  environment exits with `NODE: unbound variable`; the interactive terminal
+  masks the bug because it already exports `NODE` and Codex identity values.
+- [fixed] Initialize the signed Node runtime in the parent shell before reading
+  state/checking visibility. Also include upstream v1.5.12's
+  `check-image-dimensions.mjs` in both the App bundle and engine completeness
+  list; it was present in source but omitted from the package, causing every
+  installed image load to report a false dimension failure.
+- [verified] The original ScriptRunner-clean environment reproduction switched
+  `14.jpg` to `15.jpg`. After rebuilding and atomically updating the App and
+  local engine, the native menu-bar timer switched `15.jpg` to `16.jpg`, held
+  it for the configured interval, then switched to `17.jpg`; runtime status
+  reports theme `17` as applied and rotation has no error.
+- [deployment] v1.5.12 arm64 App is installed and running. Codex was not
+  stopped. Recoverable pre-update copies are under the local deployment backup
+  directory.
+
 Updated: 2026-08-10 CST (Asia/Shanghai)
 
 ## Upstream v1.5.12 Merge
 
-- [in progress] Merge upstream `main@6f789be` into
+- [complete] Merged upstream `main@6f789be` into
   `feat/immersive-wallpaper-rotation`, using the v1.5.12 renderer selectors and
   compatibility fixes as the baseline.
 - [resolved] Preserve all-ratio sidebar background extension, renderer argument
   hot updates, silent scheduled rotation, hidden avatar-overlay exclusion, and
   macOS/Windows rotation controls while adopting upstream generated runtime
   assets and the reorganized macOS Theme submenu.
-- [pending] Run focused merge regressions, create the merge commit, restore the
-  pre-merge hidden-renderer visibility guard from stash, then run the complete
-  macOS and portable Windows verification set.
+- [verified] Shared asset synchronization, focused macOS/Windows injector and
+  renderer tests, payload integrity tests, and Swift tests pass on merge commit
+  `077af3e`.
+- [verified] Restored the pre-merge hidden-renderer visibility guard as
+  uncommitted work. The full macOS suite, all portable Windows and shared Node
+  tests, arm64 App build, strict code-sign verification, bundle/source script
+  equality, and a read-only live Codex 26.803 `--check-visible` probe pass.
+- [artifact] Fresh v1.5.12 arm64 App is available under `macos/release/`.
+
+Updated: 2026-08-10 16:20 CST (Asia/Shanghai)
+
+## Codex 26.803 Renderer Compatibility Investigation
+
+- [reproduced] Installed Dream Skin 1.5.6 reports `session=stale`,
+  `injectorAlive=false`, and `cdpOk=true`. The 2026-08-10 apply log ends in
+  `Initial theme verification failed`; the watcher is stopped after bounded
+  verification rather than remaining active.
+- [root cause] The visible Codex 26.803 renderer no longer exposes the 1.5.6
+  `main.main-surface` or `header.app-header-tint` anchors. It exposes the newer
+  `data-app-shell-main-surface`, `_MainContentSurface_`, and
+  `data-app-shell-header-edge-scroll` markers instead, so 1.5.6 rejects the
+  real main renderer despite a healthy loopback CDP session.
+- [upstream] Upstream releases v1.5.10 and v1.5.11 added Codex 26.727 shell and
+  settings-renderer compatibility; current upstream release v1.5.12 includes
+  those fixes. They are now merged into the local branch; the installed client
+  remains unchanged until a later explicit installation.
+- [deployment gap] The installed engine still has the old v1.5.6 injector and
+  differs from the newly rebuilt v1.5.12 app bundle. This merge did not install
+  files or restart Codex.
+
+Updated: 2026-07-30 11:06 CST (Asia/Shanghai)
+
+## macOS Visible Renderer Retry Storm Investigation
+
+- [diagnosed] The current 2.2 GiB process is the visible main Codex renderer,
+  not the excluded avatar overlay. The overlay remains unskinned with about
+  126 MiB JS heap, confirming the previous target-filter fix is active.
+- [evidence] The visible renderer has a 2.25 GiB physical footprint but only
+  about 476 MiB live JS heap. Most resident memory is Chromium Memory Tag 255 /
+  app-specific tag 16 rather than retained Dream Skin JavaScript state.
+- [root cause] While Codex is hidden, renderer verification requires
+  `document.visibilityState === "visible"` and fails after the new image has
+  already been staged and injected. Rotation treats that candidate as failed,
+  immediately tries the next image, and does not advance `last-change` until
+  the entire candidate list fails.
+- [evidence] Since the last restart, the watcher recorded 6,176 distinct theme
+  revisions and 6,143 verification failures. 5,964 refresh gaps were under
+  20 seconds, typically about 9.4 seconds, despite a configured 60-second
+  interval. Errors stopped when the Codex window became visible again.
+- [impact] Thousands of full image transfers, Blob creation/revocation, image
+  decode and verification cycles churned the visible renderer's native
+  allocator for roughly 19 hours, leaving a 2.25 GiB footprint.
+- [implemented] Automatic rotation now checks the active renderer's
+  `document.visibilityState` before changing files. Hidden, minimized, sleeping,
+  or temporarily unreachable renderers defer the round and advance the
+  interval timestamp without touching the active theme.
+- [implemented] Renderer apply/verification failure is now distinct from an
+  invalid image. It stops the current round immediately instead of trying every
+  remaining image; an invalid image still falls through to the next candidate.
+- [behavior] Manual theme changes keep strict visible-renderer verification.
+  Automatic hidden-state deferrals are silent; a real failure while still
+  visible remains reportable.
+- [verified] `bash -n`, injector syntax/bootstrap tests, `git diff --check`, and
+  the full macOS test suite passed. A fresh arm64 1.5.6 app build passed strict
+  code-sign verification, and its bundled injector/load/rotation scripts match
+  source. Live `--check-visible` returned the main visible renderer; the
+  hidden/sleep transition itself still needs post-install runtime observation.
+- [deployment] The rebuilt 1.5.6 menu-bar app was installed and restarted
+  successfully without stopping Codex; strict code-sign verification passed.
+  The active engine was intentionally not replaced: its version is also 1.5.6,
+  so automatic deployment did not run, and the guarded installer refuses to
+  replace engine bytes while Codex is open. The retry-storm fix is therefore
+  bundled in the installed app but not yet active in the running engine.
 
 Updated: 2026-07-29 15:09 CST (Asia/Shanghai)
 

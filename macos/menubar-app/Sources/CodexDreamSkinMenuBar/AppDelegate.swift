@@ -55,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUser
         "presets/preset-gothic-void-crusade/theme.json",
         "scripts/apply-from-menubar-macos.sh",
         "scripts/apply-community-theme-macos.sh",
+        "scripts/check-image-dimensions.mjs",
         "scripts/check-update-macos.sh",
         "scripts/common-macos.sh",
         "scripts/customize-theme-macos.sh",

@@ -8,6 +8,7 @@ import {
   earlyPayloadFor,
   isEligibleAppTargetUrl,
   operationPresentationAllows,
+  rendererVisibilityAllowsRotation,
 } from "../scripts/injector.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -174,8 +175,19 @@ assert.equal(
   false,
 );
 assert.equal(isEligibleAppTargetUrl("https://example.com/index.html"), false);
-assert.match(commonSource, /--operation-presentation "\$presentation"/);
-assert.match(loadImageSource, /--operation-state-owner\) OPERATION_STATE_OWNER=/);
+assert.equal(rendererVisibilityAllowsRotation("visible"), true);
+assert.equal(rendererVisibilityAllowsRotation("hidden"), false);
+assert.equal(rendererVisibilityAllowsRotation("prerender"), false);
+assert.match(
+  commonSource,
+  /--operation-presentation "\$presentation"/,
+  "Hot reapply must pass its presentation policy into the one-shot injector.",
+);
+assert.match(
+  loadImageSource,
+  /--operation-state-owner\) OPERATION_STATE_OWNER=/,
+  "Image loads must support a caller-owned operation lifecycle.",
+);
 assert.ok(
   rotateSource.indexOf('write_operation_state applying "正在自动换图"') <
     rotateSource.indexOf('"$SCRIPT_DIR/load-image-theme-macos.sh" --from-library "$candidate"'),
@@ -183,7 +195,26 @@ assert.ok(
 );
 assert.match(rotateSource, /--operation-presentation none/);
 assert.match(rotateSource, /--operation-state-owner caller/);
-assert.match(source, /const refreshPayload = async \(\) => \{\s+await pruneInvalidSessions\(\);/);
+assert.match(rotateSource, /--check-visible/);
+assert.ok(
+  rotateSource.indexOf("ensure_node_runtime") < rotateSource.indexOf('"$NODE" "$INJECTOR" --check-visible'),
+  "Rotation must initialize Node in the parent shell before checking renderer visibility.",
+);
+assert.ok(
+  rotateSource.indexOf("! rotation_renderer_visible") <
+    rotateSource.indexOf('write_operation_state applying "正在自动换图"'),
+  "Automatic rotation must defer before publishing or mutating when the renderer is hidden.",
+);
+assert.match(
+  rotateSource,
+  /if \[ "\$candidate_status" -eq 2 \]; then[\s\S]*return 0/,
+  "Renderer failures must stop the candidate loop instead of retrying every image.",
+);
+assert.match(
+  source,
+  /const refreshPayload = async \(\) => \{\s+await pruneInvalidSessions\(\);/,
+  "Watcher must revalidate retained targets before transferring a new image.",
+);
 
 const earlySource = earlyPayloadFor("", "source-contract");
 assert.doesNotMatch(earlySource, /MutationObserver|childList|subtree/,
