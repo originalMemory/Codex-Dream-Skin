@@ -172,6 +172,24 @@ try {
     "theme.json",
   ]);
 
+  const impossibleTimestamp = await makeOfficial("official-impossible-timestamp", {
+    mutateManifest: (manifest) => { manifest.createdAt = "2026-02-30T00:00:00Z"; },
+  });
+  await expectRejected(
+    impossibleTimestamp.source,
+    "macos",
+    /createdAt is not a valid date-time/,
+    "impossible-timestamp",
+  );
+
+  const leapTimestamp = await makeOfficial("official-valid-leap-timestamp", {
+    mutateManifest: (manifest) => {
+      manifest.createdAt = "2024-02-29T23:59:59.123456789+05:30";
+    },
+  });
+  const leapResult = await validate(leapTimestamp.source, "windows", "valid-leap-timestamp");
+  assert.equal(leapResult.output.format, "official");
+
   const legacyOfficial = await makeOfficial("legacy-official-no-css", { css: false });
   await expectRejected(
     legacyOfficial.source,
@@ -390,7 +408,8 @@ try {
       env: { ...process.env, HOME: importHome, LC_ALL: "C", LANG: "C" },
     })).stdout);
     assert.equal(licenseImport.status, "imported");
-    assert.equal(licenseImport.id, "studio.contract-theme-2");
+    assert.equal(licenseImport.id, "studio.contract-theme");
+    assert.equal(licenseImport.replaced, true);
     assert.equal(await fs.readFile(path.join(
       importHome,
       "Library",

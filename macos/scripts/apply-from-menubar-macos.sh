@@ -111,6 +111,13 @@ fi
 
 progress "检查 ChatGPT…"
 ensure_state_root
+progress "尝试热重载皮肤…"
+
+if hot_reapply_theme "$PORT" 8000; then
+  progress "完成：皮肤已应用"
+  exit 0
+fi
+
 progress "启动/连接调试口…"
 
 "$SCRIPT_DIR/start-dream-skin-macos.sh" --restart-existing >>"$LOG_OUT" 2>&1

@@ -97,6 +97,10 @@ ensure_node_runtime
 "$NODE" "$SCRIPT_DIR/image-metadata.mjs" --check "$IMAGE" >/dev/null 2>&1 \
   || fail "Image metadata is invalid or exceeds the 16384px / 50MP safety limit."
 
+# Reject decompression bombs before `sips -Z` rasterizes the full source image.
+"$NODE" "$SCRIPT_DIR/check-image-dimensions.mjs" "$IMAGE" \
+  || fail "Image dimensions are invalid or exceed the safe pixel budget (max 16384 px per side / 50 megapixels)."
+
 image_name="background.jpg"
 temporary="$THEME_DIR/.background.$$.tmp.jpg"
 prepared="$THEME_DIR/$image_name"

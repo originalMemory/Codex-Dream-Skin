@@ -1,5 +1,20 @@
 # Task Progress
 
+Updated: 2026-08-10 CST (Asia/Shanghai)
+
+## Upstream v1.5.12 Merge
+
+- [in progress] Merge upstream `main@6f789be` into
+  `feat/immersive-wallpaper-rotation`, using the v1.5.12 renderer selectors and
+  compatibility fixes as the baseline.
+- [resolved] Preserve all-ratio sidebar background extension, renderer argument
+  hot updates, silent scheduled rotation, hidden avatar-overlay exclusion, and
+  macOS/Windows rotation controls while adopting upstream generated runtime
+  assets and the reorganized macOS Theme submenu.
+- [pending] Run focused merge regressions, create the merge commit, restore the
+  pre-merge hidden-renderer visibility guard from stash, then run the complete
+  macOS and portable Windows verification set.
+
 Updated: 2026-07-29 15:09 CST (Asia/Shanghai)
 
 ## macOS Renderer Memory Investigation

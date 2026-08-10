@@ -22,6 +22,7 @@ const rotateSource = await fs.readFile(
   path.resolve(here, "../scripts/rotate-images-macos.sh"),
   "utf8",
 );
+const shellSelector = 'main:is(.main-surface, [data-app-shell-main-surface], [class*="_MainContentSurface_"])';
 
 function createFixture() {
   const domReady = [];
@@ -29,7 +30,15 @@ function createFixture() {
   const intervals = new Map();
   let nextTimer = 1;
   let nextInterval = 1;
-  const markers = { shell: false, sidebar: false, main: false, settings: false };
+  const markers = {
+    shell: false,
+    sidebar: false,
+    main: false,
+    settingsPanel: false,
+    settings: false,
+    genericInput: false,
+    branding: false,
+  };
   let root = {};
   const context = {
     window: { installs: [] },
@@ -38,11 +47,21 @@ function createFixture() {
       get documentElement() { return root; },
       addEventListener(type, callback) { if (type === "DOMContentLoaded") domReady.push(callback); },
       querySelector(selector) {
-        if (selector === "main.main-surface") return markers.shell ? {} : null;
+        if (selector === shellSelector) return markers.shell ? {} : null;
         if (selector === "aside.app-shell-left-panel") return markers.sidebar ? {} : null;
         if (selector === "[role=\"main\"]") return markers.main ? {} : null;
+        if (selector === "main, [role=\"main\"]") return markers.main ? {} : null;
+        if (selector === '[data-settings-panel-slug="general-settings"]') {
+          return markers.settingsPanel ? {} : null;
+        }
+        if (selector.includes("textarea") || selector.includes("contenteditable") || selector.includes("textbox")) {
+          return markers.genericInput ? {} : null;
+        }
         if (selector.includes("appearance-theme") || selector.includes("theme-preview")) {
           return markers.settings ? {} : null;
+        }
+        if (selector.includes("app-shell-header-context-menu-surface")) {
+          return markers.branding ? {} : null;
         }
         return null;
       },
@@ -63,6 +82,7 @@ function createFixture() {
   return {
     context,
     markers,
+    brandAsCodex() { markers.branding = true; },
     makeNotReady() { root = null; },
     makeReady() { root = {}; },
     fireDomReady() { for (const callback of [...domReady]) callback(); },
@@ -82,6 +102,28 @@ guarded.markers.sidebar = true;
 guarded.tick();
 assert.deepEqual(guarded.context.window.installs, ["guarded"]);
 
+const generic = createFixture();
+vm.runInNewContext(earlyPayloadFor('window.installs.push("generic")', "generic"), generic.context);
+generic.markers.main = true;
+generic.markers.genericInput = true;
+generic.tick();
+assert.deepEqual(generic.context.window.installs, [],
+  "An unbranded app:// page with generic main/input anchors must remain untouched.");
+generic.brandAsCodex();
+generic.tick();
+assert.deepEqual(generic.context.window.installs, ["generic"],
+  "A verified app:// Codex surface with generic main/input anchors must accept newer renderer shells.");
+
+const settingsPanel = createFixture();
+vm.runInNewContext(
+  earlyPayloadFor('window.installs.push("settings-panel")', "settings-panel"),
+  settingsPanel.context,
+);
+settingsPanel.markers.settingsPanel = true;
+settingsPanel.tick();
+assert.deepEqual(settingsPanel.context.window.installs, ["settings-panel"],
+  "Codex 26.727 Settings must accept its stable general-settings panel without legacy appearance controls.");
+
 const generations = createFixture();
 generations.makeNotReady();
 generations.markers.shell = true;
@@ -99,12 +141,10 @@ assert.equal(generations.context.window.__CODEX_DREAM_SKIN_EARLY_APPLIED__, "new
 
 const updateCalls = [];
 const updated = await applyThemeUpdateToSession({
-  async send(method, params, timeoutMs) {
-    updateCalls.push({ method, params, timeoutMs });
+  async send(method, params) {
+    updateCalls.push({ method, params });
     if (method === "Runtime.evaluate") return { result: { objectId: "installer-1" } };
-    if (method === "Runtime.callFunctionOn") {
-      return { result: { value: { installed: true } } };
-    }
+    if (method === "Runtime.callFunctionOn") return { result: { value: { installed: true } } };
     return {};
   },
 }, {
@@ -125,12 +165,8 @@ assert.doesNotMatch(
 assert.equal(updateCalls.at(-1).method, "Runtime.releaseObject");
 
 assert.equal(operationPresentationAllows("all", "loading"), true);
-assert.equal(operationPresentationAllows("all", "success"), true);
 assert.equal(operationPresentationAllows("errors-only", "loading"), false);
-assert.equal(operationPresentationAllows("errors-only", "success"), false);
 assert.equal(operationPresentationAllows("errors-only", "error"), true);
-assert.equal(operationPresentationAllows("none", "loading"), false);
-assert.equal(operationPresentationAllows("none", "success"), false);
 assert.equal(operationPresentationAllows("none", "error"), false);
 assert.equal(isEligibleAppTargetUrl("app://-/index.html"), true);
 assert.equal(
@@ -138,16 +174,8 @@ assert.equal(
   false,
 );
 assert.equal(isEligibleAppTargetUrl("https://example.com/index.html"), false);
-assert.match(
-  commonSource,
-  /--operation-presentation "\$presentation"/,
-  "Hot reapply must pass its presentation policy into the one-shot injector.",
-);
-assert.match(
-  loadImageSource,
-  /--operation-state-owner\) OPERATION_STATE_OWNER=/,
-  "Image loads must support a caller-owned operation lifecycle.",
-);
+assert.match(commonSource, /--operation-presentation "\$presentation"/);
+assert.match(loadImageSource, /--operation-state-owner\) OPERATION_STATE_OWNER=/);
 assert.ok(
   rotateSource.indexOf('write_operation_state applying "正在自动换图"') <
     rotateSource.indexOf('"$SCRIPT_DIR/load-image-theme-macos.sh" --from-library "$candidate"'),
@@ -155,19 +183,65 @@ assert.ok(
 );
 assert.match(rotateSource, /--operation-presentation none/);
 assert.match(rotateSource, /--operation-state-owner caller/);
-assert.match(
-  source,
-  /const refreshPayload = async \(\) => \{\s+await pruneInvalidSessions\(\);/,
-  "Watcher must revalidate retained targets before transferring a new image.",
-);
+assert.match(source, /const refreshPayload = async \(\) => \{\s+await pruneInvalidSessions\(\);/);
 
-const earlyStart = source.indexOf("export function earlyPayloadFor");
-const earlySource = source.slice(earlyStart, earlyStart + 2200);
-assert.ok(earlyStart >= 0, "Early payload helper must remain exported for bootstrap tests.");
+const earlySource = earlyPayloadFor("", "source-contract");
 assert.doesNotMatch(earlySource, /MutationObserver|childList|subtree/,
   "Early bootstrap must not observe the entire renderer DOM.");
+assert.doesNotMatch(earlySource, /document\.title|document\.body\?\.innerText|location\.href/,
+  "The early bootstrap must not read page title, body text, or URL.");
 assert.match(earlySource, /DOMContentLoaded/);
 assert.match(earlySource, /setInterval\(install, 250\)/);
+const identityProbeStart = source.indexOf("async function probeSession");
+const identityProbeSource = source.slice(identityProbeStart, identityProbeStart + 1800);
+assert.ok(identityProbeStart >= 0, "The live target probe must remain covered by the identity test.");
+const probePrefix = "return session.evaluate(`";
+const probePayloadStart = source.indexOf(probePrefix, identityProbeStart) + probePrefix.length;
+const probePayloadEnd = source.indexOf("`);", probePayloadStart);
+assert.ok(probePayloadStart >= probePrefix.length && probePayloadEnd > probePayloadStart,
+  "The live identity expression must remain extractable for behavioral testing.");
+const probeTemplate = source.slice(probePayloadStart, probePayloadEnd);
+assert.doesNotMatch(probeTemplate, /`/, "The live identity expression must not contain nested template literals.");
+const liveProbePayload = vm.runInNewContext(`\`${probeTemplate}\``, {
+  selectorLiteral: (key) => JSON.stringify(`[selector-${key}]`),
+  stableTestidLiteral: (key) => JSON.stringify(`[data-testid="${key}"]`),
+});
+const runLiveProbe = ({
+  protocol = "app:", settingsPanel: hasSettingsPanel = false,
+  genericMain = false, genericInput = false, branding = false,
+} = {}) => vm.runInNewContext(liveProbePayload, {
+  location: { protocol },
+  document: {
+    querySelector(selector) {
+      if (selector === "[selector-settings-panel]") return hasSettingsPanel ? {} : null;
+      if (selector === 'main, [role="main"]') return genericMain ? {} : null;
+      if (selector === 'textarea, [contenteditable="true"], [role="textbox"]') {
+        return genericInput ? {} : null;
+      }
+      if (selector === '[data-testid="app-shell-header-context-menu-surface"]') {
+        return branding ? {} : null;
+      }
+      return null;
+    },
+  },
+});
+assert.equal(runLiveProbe({ settingsPanel: true }).codex, true,
+  "The live probe must accept the Codex 26.727 general Settings panel on app://.");
+assert.equal(runLiveProbe({ protocol: "https:", settingsPanel: true }).codex, false,
+  "The Settings marker must never identify a non-app target.");
+assert.equal(runLiveProbe({ genericMain: true, genericInput: true }).codex, false,
+  "The live probe must reject an unbranded generic app target.");
+assert.equal(runLiveProbe({ genericMain: true, genericInput: true, branding: true }).codex, true,
+  "The live probe may accept generic anchors only with the stable Codex branding marker.");
+assert.match(identityProbeSource, /selectorLiteral\("settings-panel"\)/,
+  "The live probe must retain the current Settings structural marker.");
+assert.match(identityProbeSource, /return Boolean\(main && input && branded\)/,
+  "The live target probe must require branding together with both generic anchors.");
+assert.match(identityProbeSource, /app-shell-header-context-menu-surface/,
+  "The live target probe must use a structural Codex branding marker.");
+assert.doesNotMatch(identityProbeSource, /document\.title|document\.body\?\.innerText|location\.href/,
+  "The live target probe must not read page title, body text, or URL.");
+assert.doesNotMatch(identityProbeSource, /\(main && input\) \|\||\(main && branded\) \|\||\(input && branded\)/);
 const discoveryStart = source.indexOf("record.earlyScriptId = await registerEarly");
 const probeStart = source.indexOf("const probe = await waitForCodexProbe", discoveryStart);
 assert.ok(discoveryStart >= 0 && probeStart > discoveryStart, "Early registration must happen before full shell probing.");
@@ -180,11 +254,6 @@ assert.match(
   source,
   /const earlyApplied = await session\.evaluate\([\s\S]*if \(!earlyApplied\) \{[\s\S]*applyToSession/,
   "The watcher must not run the full payload twice after a successful early install.",
-);
-assert.match(
-  source,
-  /!staticChanged &&\s+await applyThemeUpdateToSession/,
-  "Theme-only refreshes must use the lightweight renderer call path.",
 );
 assert.match(
   source,

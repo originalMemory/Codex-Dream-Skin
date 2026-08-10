@@ -75,21 +75,26 @@ Passion8 为本项目用户准备了专属福利：通过<a href="https://passio
 - [**主题库 Gallery**](https://dreamskin.cc/gallery)：浏览社区已审核的主题，支持最新 / 热门排序和创作者榜单。
   每套主题都能先在网页里的桌面模拟器中试穿，再决定装不装。
 
-<p align="center">
-  <a href="https://dreamskin.cc/gallery">
-    <img src="docs/images/site-tryon-zh.webp" alt="在 DreamSkin.cc 的桌面模拟器里试穿社区主题「晨雾山水」" width="900">
-  </a><br>
-  <sub>社区主题「晨雾山水」的在线试穿 · 首页/任务页、宽窄窗口、侧栏展开收起都能当场切，满意了再一键换肤或下载主题包</sub>
-</p>
+<table align="center">
+  <tr>
+    <td align="center">
+      <img src="docs/images/悟空.png" alt="社区主题「悟空（WUKONG）」在桌面模拟器里的实机效果" width="420"><br>
+      <sub>「悟空（WUKONG）」by JamesOpsLab</sub>
+    </td>
+    <td align="center">
+      <img src="docs/images/DeepSeek-鲸鱼娘.png" alt="社区主题「DeepSeek-鲸鱼娘」在桌面模拟器里的实机效果" width="420"><br>
+      <sub>「DeepSeek-鲸鱼娘」by powerdog996</sub>
+    </td>
+  </tr>
+</table>
 
 - [**在线 Studio**](https://dreamskin.cc/studio)：在浏览器里换背景图、调主题色、写 Safe CSS，导出 `.zip` 主题包，
   也可以直接投稿到主题库（需登录，经人工审核后公开）。
 
 <p align="center">
-  <a href="https://dreamskin.cc/studio">
-    <img src="docs/images/site-studio-zh.webp" alt="在 DreamSkin.cc 在线 Studio 里编辑社区主题「月下松岚」" width="900">
-  </a><br>
-  <sub>在线 Studio · 左侧实时预览，右侧调背景图、外观焦点与配色；主题库里任意一套主题都能一键载入继续改</sub>
+  <img src="docs/images/studio-custom-look.png" alt="在 DreamSkin.cc 在线 Studio 里调好的一套自定义背景效果" width="900">
+  <br>
+  <sub>在线 Studio · 换一张喜欢的背景图，调好焦点与配色，就是你自己的主题</sub>
 </p>
 
 macOS 菜单栏和 Windows 托盘都有「主题库 Gallery」和「在线 Studio」入口，可以直接打开。
@@ -187,8 +192,9 @@ macOS 菜单栏和 Windows 托盘都有「主题库 Gallery」和「在线 Studi
 
 本地简化 ZIP 也必须恰好包含非空 `theme.json`、非空 `theme.css` 和其引用图片；该格式没有正式清单的
 完整性与兼容性声明，只应从可信来源使用。压缩包最大 32 MiB、最多 32 个条目、解压后最多 64 MiB。
-导入成功后主题只会加入“已保存的主题”，不会自动替换当前主题；相同内容不会重复写入，同 ID 的不同
-主题会使用新的安全标识保存。
+导入成功后主题只会加入“已保存的主题”，不会自动替换当前主题；相同内容不会重复写入。同 ID 的新版本会在
+确认旧目录身份后原地更新，并仅清理语义指纹完全一致、已确认属于同一主题的旧版 `-2`/`-3` 重复目录；无法
+确认身份时会拒绝覆盖，也不会根据名称猜测并删除其他主题。
 
 也可以先手动解压，再把包含 `theme.json`、`theme.css` 和背景图的完整主题目录移动到本机主题库：
 
@@ -224,9 +230,11 @@ macOS 菜单栏和 Windows 托盘都有「主题库 Gallery」和「在线 Studi
 
 ## 安全边界
 
-- CDP 只绑 `127.0.0.1`，主题运行期间勿跑来路不明的本机程序
+- CDP 只绑 `127.0.0.1`，但**没有身份认证**；同一台电脑上的其他进程仍可能连接并读取或控制 renderer
+- 暂停主题或只停止 injector 不会关闭已启动 Codex 的调试端口；使用完整 Restore/重启，或退出全部 Codex 后从官方普通入口重新打开，风险窗口才结束
 - 不修改官方安装目录与代码签名
 - **不会**自动改写 API Key / Base URL；中转与换肤分开
+- 完整威胁模型与操作建议见 [`SECURITY.md`](./SECURITY.md)
 
 ## 许可与声明
 
