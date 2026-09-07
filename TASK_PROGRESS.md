@@ -1,5 +1,28 @@
 # Task Progress
 
+Updated: 2026-09-07 CST (Asia/Shanghai)
+
+## Selective Upstream v1.5.18 Compatibility Port
+
+- [baseline] Existing collapsed-sidebar verification fix committed as
+  `92f6052` after focused macOS/Windows tests and syntax checks passed.
+- [integrated] Cherry-picked upstream Codex 26.818 compatibility commits
+  `b44e729` and `816e565`, preserving this branch's all-ratio wallpaper rules,
+  hot rotation path, and collapsed-sidebar verification behavior.
+- [integrated] Cherry-picked Home composer corner preservation (`4a9d3c1`)
+  and native font preservation (`5489590`); ported the v1.5.18 `text-default`
+  Home suggestion fix without importing the upstream release-history deletion.
+- [excluded] Localization, update-check behavior, restart/quit orchestration,
+  Windows managed CDP profile, CI/release plumbing, docs-only changes, and
+  upstream TASK_PROGRESS history remain out of scope.
+- [verified] Shared asset synchronization, Node syntax, shared renderer tests,
+  focused macOS/Windows injector tests, and the portable macOS repository suite
+  pass. A read-only probe recognizes the visible ChatGPT 26.901.22334 renderer.
+- [gap] `pwsh` is unavailable, so the full Windows PowerShell suite remains for
+  CI. Live Doctor intentionally remains unverified because the running app still
+  has the previously deployed payload; no install or ChatGPT restart was made.
+- [ready] v1.5.18 compatibility and version integration is ready to commit.
+
 Updated: 2026-08-18 16:00 CST (Asia/Shanghai)
 
 ## Collapsed Sidebar Verification Fix
