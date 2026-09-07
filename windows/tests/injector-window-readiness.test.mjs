@@ -264,6 +264,18 @@ test("visible settings is the only L0 structure exception", async () => {
   assert.equal(generic.result.pass, true);
   assert.equal(generic.result.readiness.structurePass, true);
 
+  const collapsedSidebar = await verify({
+    dom: makeDomFixture({
+      scope: { level: "L0", baseState: "thread", missingL1: ["left-panel"] },
+      sidebar: null,
+      home: null,
+      genericMain: makeElement({ rect: makeRect(900, 650, 20, 20) }),
+      genericInput: makeElement({ rect: makeRect(620, 80, 180, 620) }),
+    }),
+  });
+  assert.equal(collapsedSidebar.result.pass, true);
+  assert.equal(collapsedSidebar.result.readiness.structurePass, true);
+
   const genericL0 = await verify({
     dom: makeDomFixture({
       scope: {

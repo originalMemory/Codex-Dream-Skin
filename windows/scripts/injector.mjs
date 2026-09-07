@@ -1303,11 +1303,14 @@ export async function verifySession(
     const homeScope = result.scope?.baseState === 'home' || result.homePresent;
     const l1ScopePass = result.scope?.level === 'L1' &&
       Array.isArray(result.scope?.missingL1) && result.scope.missingL1.length === 0;
-    const genericStructurePass = l1ScopePass && Boolean(result.genericMain?.visible) &&
+    const genericStructurePass = Boolean(result.genericMain?.visible) &&
       Boolean(result.genericInput?.visible || (homeScope && result.homeSurface?.visible));
+    const collapsedSidebarPass = result.scope?.level === 'L0' &&
+      result.scope?.missingL1?.length === 1 && result.scope.missingL1[0] === 'left-panel' &&
+      Boolean(result.shell?.visible) && genericStructurePass;
     const l0StructurePass = result.scope?.level === 'L0' &&
       result.scope?.baseState === 'settings' && Boolean(result.settingsAnchor?.visible);
-    const structurePass = l0StructurePass || (l1ScopePass &&
+    const structurePass = l0StructurePass || collapsedSidebarPass || (l1ScopePass &&
       (Boolean(result.shell?.visible && result.sidebar?.visible) || genericStructurePass));
     const documentPass = result.documentVisibility === 'visible' && !result.documentHidden;
     const viewportPass = result.viewport.width >= ${MIN_RENDERER_VIEWPORT_WIDTH} &&

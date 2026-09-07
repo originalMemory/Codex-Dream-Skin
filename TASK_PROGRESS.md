@@ -1,5 +1,33 @@
 # Task Progress
 
+Updated: 2026-08-18 16:00 CST (Asia/Shanghai)
+
+## Collapsed Sidebar Verification Fix
+
+- [reproduced] Automatic rotation repeatedly staged the next valid image but
+  reported display verification failure. Payload identity, revision, style,
+  visibility, viewport, shell, main area, and composer all passed; only
+  `structurePass` failed because collapsing the Codex sidebar removes the
+  `aside.app-shell-left-panel` node and downgrades scope to L0.
+- [root cause] The selector contract explicitly says the left-panel node is
+  removed while collapsed, but both platform verifiers required a complete L1
+  scope before accepting their existing generic main/composer evidence.
+- [implemented] Accept only the narrow L0 case whose sole missing L1 anchor is
+  `left-panel`, while still requiring a visible shell and generic main/composer
+  structure. Missing shell/header and other incomplete L0 routes remain
+  rejected.
+- [verified] Focused macOS/Windows readiness tests, all portable Windows and
+  shared Node tests, and the complete macOS suite pass. A fresh arm64 App build
+  passes strict code-sign verification.
+- [verified] After atomic App/engine update and watcher restart, the real Codex
+  26.810 renderer passes with `sidebar=false`, L0 scope missing only
+  `left-panel`, and `structurePass=true`. With the sidebar still collapsed,
+  automatic rotation advanced from `16.jpg` to `17.jpg` and cleared the prior
+  error.
+- [deployment] Updated v1.5.12 App and injector are active; Codex was not
+  restarted. Recoverable pre-update copies remain in the local deployment
+  backup directory.
+
 Updated: 2026-08-10 17:05 CST (Asia/Shanghai)
 
 ## macOS Automatic Rotation No-op Investigation

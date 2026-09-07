@@ -54,6 +54,8 @@ function makeDomFixture({
   shell = makeElement(),
   sidebar = makeElement(),
   composer = makeElement(),
+  genericMain = null,
+  genericInput = null,
   settings = null,
   visibilityState = "visible",
   viewportWidth = 1280,
@@ -75,6 +77,8 @@ function makeDomFixture({
       if (selector === selectors.shell) return shell;
       if (selector === selectors.sidebar) return sidebar;
       if (selector === selectors.composer) return composer;
+      if (selector === '[data-ds-part="main"], [data-ds-part="home"]') return genericMain;
+      if (selector === '[data-ds-part="composer"]') return genericInput;
       if (selector === selectors.settings || selector === selectors.themePreview) return settings;
       if (selector === selectors.home || selector === selectors.homeIcon ||
           selector === selectors.gameSource || selector === selectors.suggestions) return null;
@@ -141,6 +145,37 @@ test("visible L1 renderer passes exact macOS verification", async () => {
   assert.equal(result.pass, true);
   assert.equal(result.shell.visible, true);
   assert.equal(result.sidebar.visible, true);
+});
+
+test("collapsed sidebar passes only with the visible shell and generic app structure", async () => {
+  const genericMain = makeElement({ rect: makeRect(900, 650, 20, 20) });
+  const genericInput = makeElement({ rect: makeRect(620, 80, 180, 620) });
+  const collapsed = await verify({
+    dom: makeDomFixture({
+      scope: { level: "L0", baseState: "thread", missingL1: ["left-panel"] },
+      sidebar: null,
+      genericMain,
+      genericInput,
+    }),
+  });
+  assert.equal(collapsed.pass, true);
+  assert.equal(collapsed.checks.structurePass, true);
+
+  const missingShell = await verify({
+    dom: makeDomFixture({
+      scope: {
+        level: "L0",
+        baseState: "thread",
+        missingL1: ["shell-main", "left-panel", "header-tint"],
+      },
+      shell: null,
+      sidebar: null,
+      genericMain,
+      genericInput,
+    }),
+  });
+  assert.equal(missingShell.pass, false);
+  assert.equal(missingShell.checks.structurePass, false);
 });
 
 test("CSS-hidden, detached, and offscreen anchors cannot satisfy L1", async () => {

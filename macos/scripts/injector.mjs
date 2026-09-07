@@ -238,11 +238,14 @@ export function assessRendererVerification(renderer, nativeWindow, expected) {
   const homeRoute = result.scope?.baseState === "home" || result.homeRoute || result.homePresent;
   const l1ScopePass = result.scope?.level === "L1" &&
     Array.isArray(result.scope?.missingL1) && result.scope.missingL1.length === 0;
-  const genericStructurePass = l1ScopePass && Boolean(result.genericMain?.visible) &&
+  const genericStructurePass = Boolean(result.genericMain?.visible) &&
     (Boolean(result.genericInput?.visible) || Boolean(homeRoute && result.homePresent));
+  const collapsedSidebarPass = result.scope?.level === "L0" &&
+    result.scope?.missingL1?.length === 1 && result.scope.missingL1[0] === "left-panel" &&
+    Boolean(result.shell?.visible) && genericStructurePass;
   const l0StructurePass = result.scope?.level === "L0" &&
     settingsRoute && Boolean(result.settings?.visible);
-  const structurePass = l0StructurePass || (l1ScopePass && (
+  const structurePass = l0StructurePass || collapsedSidebarPass || (l1ScopePass && (
     (Boolean(result.shell?.visible) && Boolean(result.sidebar?.visible)) || genericStructurePass
   ));
   const nativeWindowPass = nativeWindow?.status === "ready";
