@@ -1,5 +1,8 @@
 ﻿[CmdletBinding()]
-param([int]$Port = 9335)
+param(
+  [int]$Port = 9335,
+  [switch]$Worker
+)
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
@@ -18,6 +21,14 @@ $startScript = Join-Path $PSScriptRoot 'start-dream-skin.ps1'
 $restoreScript = Join-Path $PSScriptRoot 'restore-dream-skin.ps1'
 $checkUpdateScript = Join-Path $PSScriptRoot 'check-update.ps1'
 $startupShortcut = Join-Path ([Environment]::GetFolderPath('Startup')) 'Codex Dream Skin.lnk'
+
+if (-not $Worker) {
+  $trayScriptToken = ConvertTo-DreamSkinProcessArgument -Value $PSCommandPath
+  Start-Process -FilePath $powershell -ArgumentList `
+    "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File $trayScriptToken -Port $Port -Worker" `
+    -WindowStyle Hidden | Out-Null
+  exit 0
+}
 
 $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $mutex = [System.Threading.Mutex]::new($false, "Local\CodexDreamSkin.$sid.Tray")
@@ -152,6 +163,7 @@ try {
     $shortcut.Arguments = "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File `"$PSScriptRoot\tray-dream-skin.ps1`""
     $shortcut.WorkingDirectory = $SkillRoot
     $shortcut.Description = 'Start Codex Dream Skin in the notification area'
+    $shortcut.IconLocation = "$(Join-Path $SkillRoot 'assets\codex-dream-skin.ico'),0"
     $shortcut.Save()
   }
 

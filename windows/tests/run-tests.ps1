@@ -240,6 +240,7 @@ try {
     throw 'Runtime scripts are not unblocked only after staged byte-content verification.'
   }
   foreach ($requiredNodeBehavior in @(
+    'assets\codex-dream-skin.ico',
     'runtime\node\node.exe',
     'runtime\node\LICENSE',
     '$sourceHasBundledRuntime',
@@ -298,7 +299,10 @@ try {
     '$trayScript = $engine.Tray',
     '$shortcut.WorkingDirectory = $engine.Root',
     '$restore.WorkingDirectory = $engine.Root',
-    '$tray.WorkingDirectory = $engine.Root'
+    '$tray.WorkingDirectory = $engine.Root',
+    '$shortcut.IconLocation = "$iconPath,0"',
+    '$restore.IconLocation = "$iconPath,0"',
+    '$tray.IconLocation = "$iconPath,0"'
   )) {
     if (-not $installSource.Contains($requiredShortcutBinding)) {
       throw "Installer shortcut still depends on its source checkout: $requiredShortcutBinding"
@@ -1161,7 +1165,7 @@ try {
   New-Item -ItemType Directory -Path $releaseFixtureAssets, $releaseFixtureScripts, $releaseFixturePresetDirectory -Force | Out-Null
   Copy-Item -LiteralPath (Join-Path $Root 'VERSION') -Destination $releaseFixtureRoot -Force
   foreach ($releaseAsset in @(
-    'dream-skin.css', 'renderer-inject.js', 'safe-css-policy.json', 'safe-css-validator.mjs', 'selectors.json',
+    'codex-dream-skin.ico', 'dream-skin.css', 'renderer-inject.js', 'safe-css-policy.json', 'safe-css-validator.mjs', 'selectors.json',
     'theme-package-validator.mjs'
   )) {
     Copy-Item -LiteralPath (Join-Path $Root "assets\$releaseAsset") `
@@ -1337,7 +1341,10 @@ try {
     "Get-DreamSkinTrayText -Key 'ChangeBackground'",
     "Get-DreamSkinTrayText -Key 'SavedThemes'",
     "Get-DreamSkinTrayText -Key 'Restore'",
-    'Add-DreamSkinTrayLanguageMenu'
+    'Add-DreamSkinTrayLanguageMenu',
+    '[switch]$Worker',
+    '-Port $Port -Worker',
+    '$shortcut.IconLocation'
   )) {
     if (-not $traySource.Contains($requiredTrayAction)) { throw "Tray action is missing: $requiredTrayAction" }
   }
@@ -1389,7 +1396,7 @@ try {
       throw "Windows injector operation UI is missing: $requiredOperationUi"
     }
   }
-  if ([regex]::Matches($traySource, '-ExecutionPolicy RemoteSigned').Count -ne 2 -or
+  if ([regex]::Matches($traySource, '-ExecutionPolicy RemoteSigned').Count -ne 3 -or
     $traySource.Contains('-ExecutionPolicy Bypass')) {
     throw 'Tray actions still bypass the PowerShell execution policy.'
   }
