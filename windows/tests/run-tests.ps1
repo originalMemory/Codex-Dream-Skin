@@ -288,6 +288,23 @@ try {
       throw "Unicode-safe Node path probe is missing: $requiredUnicodeProbeContract"
     }
   }
+  $notificationExecutable = 'C:\Program Files\WindowsApps\OpenAI.Codex_test\app\ChatGPT.exe'
+  $notificationToken = Get-DreamSkinNotificationClickToken `
+    -CommandLine "`"$notificationExecutable`" type=click&tag=7411034840424550897" `
+    -Executable $notificationExecutable
+  if ($notificationToken -cne 'type=click&tag=7411034840424550897') {
+    throw 'A valid Codex notification click token was not recognized.'
+  }
+  foreach ($invalidNotificationCommand in @(
+    "`"$notificationExecutable`" type=click&tag=not-a-number",
+    "`"$notificationExecutable`" type=click&tag=7411034840424550897 extra",
+    '"C:\Other\ChatGPT.exe" type=click&tag=7411034840424550897'
+  )) {
+    if (Get-DreamSkinNotificationClickToken `
+      -CommandLine $invalidNotificationCommand -Executable $notificationExecutable) {
+      throw "An unsafe Codex notification command was accepted: $invalidNotificationCommand"
+    }
+  }
   $trayGuardIndex = $installSource.IndexOf('if (Test-DreamSkinTrayActive)', [System.StringComparison]::Ordinal)
   $engineInstallIndex = $installSource.IndexOf('$engine = Install-DreamSkinRuntimeEngine', [System.StringComparison]::Ordinal)
   if ($trayGuardIndex -lt 0 -or $engineInstallIndex -le $trayGuardIndex) {
@@ -1342,6 +1359,9 @@ try {
     "Get-DreamSkinTrayText -Key 'SavedThemes'",
     "Get-DreamSkinTrayText -Key 'Restore'",
     'Add-DreamSkinTrayLanguageMenu',
+    'Invoke-DreamSkinNotificationRelay',
+    'Get-DreamSkinNotificationClickToken',
+    'Start-DreamSkinCodexDirect',
     '[switch]$Worker',
     '-Port $Port -Worker',
     '$shortcut.IconLocation'

@@ -511,6 +511,18 @@ function Test-DreamSkinCommandLineToken {
   return [regex]::IsMatch($CommandLine, $pattern)
 }
 
+function Get-DreamSkinNotificationClickToken {
+  param(
+    [Parameter(Mandatory = $true)][string]$CommandLine,
+    [Parameter(Mandatory = $true)][string]$Executable
+  )
+  $pattern = '^\s*"' + [regex]::Escape([System.IO.Path]::GetFullPath($Executable)) +
+    '"\s+(?<token>type=click&tag=[0-9]{1,20})\s*$'
+  $match = [regex]::Match($CommandLine, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+  if (-not $match.Success) { return $null }
+  return $match.Groups['token'].Value
+}
+
 function Get-DreamSkinCodexDebugArgumentStatus {
   param(
     [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Processes,

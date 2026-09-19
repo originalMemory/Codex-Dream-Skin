@@ -64,6 +64,13 @@ try {
     try { $null = Invoke-DreamSkinRotationTick -StateRoot $StateRoot } catch {}
   })
   $rotationTimer.Start()
+  $notificationRelayPids = @{}
+  $notificationRelayTimer = [System.Windows.Forms.Timer]::new()
+  $notificationRelayTimer.Interval = 2000
+  $notificationRelayTimer.add_Tick({
+    try { Invoke-DreamSkinNotificationRelay } catch {}
+  })
+  $notificationRelayTimer.Start()
 
   function Show-DreamSkinTrayError {
     param([string]$Message)
@@ -148,6 +155,57 @@ try {
       return & $Action
     } finally {
       Exit-DreamSkinOperationLock -Mutex $themeOperationLock
+    }
+  }
+
+  function Invoke-DreamSkinNotificationRelay {
+    $state = try { Read-DreamSkinState -Path $paths.State } catch { return }
+    if (-not $state.profilePath -or -not $state.port -or -not $state.browserId) { return }
+    $managedProfile = Join-Path $StateRoot 'cdp-profile'
+    if (-not (Test-DreamSkinPathEqual -Left "$($state.profilePath)" -Right $managedProfile)) { return }
+    $notificationProcesses = @(Get-CimInstance Win32_Process -Filter "Name = 'ChatGPT.exe'" `
+      -ErrorAction SilentlyContinue | Where-Object {
+        -not $notificationRelayPids.ContainsKey([int]$_.ProcessId) -and
+        (Get-DreamSkinNotificationClickToken `
+          -CommandLine "$($_.CommandLine)" -Executable "$($state.codexExe)")
+      })
+    if ($notificationProcesses.Count -eq 0) { return }
+    $codex = try { Get-DreamSkinCodexInstall } catch { return }
+    if (-not (Test-DreamSkinPathEqual -Left "$($state.codexExe)" -Right "$($codex.Executable)")) { return }
+    if ($null -eq (Get-DreamSkinVerifiedCdpIdentity -Port ([int]$state.port) -Codex $codex)) { return }
+
+    $processes = @(Get-DreamSkinCodexProcesses -Codex $codex)
+    $profileToken = "--user-data-dir=$managedProfile"
+    $managedMain = @($processes | Where-Object {
+      Test-DreamSkinCommandLineToken -CommandLine "$($_.CommandLine)" -Token $profileToken
+    } | Select-Object -First 1)
+    if ($managedMain.Count -eq 0) { return }
+
+    foreach ($process in $notificationProcesses) {
+      $processId = [int]$process.ProcessId
+      if ($notificationRelayPids.ContainsKey($processId)) { continue }
+      $clickToken = Get-DreamSkinNotificationClickToken `
+        -CommandLine "$($process.CommandLine)" -Executable "$($codex.Executable)"
+      if (-not $clickToken) { continue }
+      $notificationRelayPids[$processId] = $true
+      try {
+        $arguments = @(
+          '--remote-debugging-address=127.0.0.1',
+          "--remote-debugging-port=$($state.port)",
+          $profileToken,
+          $clickToken
+        )
+        $null = Start-DreamSkinCodexDirect -Codex $codex -Arguments $arguments
+        Start-Sleep -Milliseconds 750
+        if ($null -eq (Get-DreamSkinVerifiedCdpIdentity -Port ([int]$state.port) -Codex $codex)) {
+          continue
+        }
+        Stop-Process -Id $processId -Force -ErrorAction Stop
+        $shell = New-Object -ComObject WScript.Shell
+        $null = $shell.AppActivate([int]$managedMain[0].ProcessId)
+      } catch {
+        # Fail open: retain the notification window when forwarding is unavailable.
+      }
     }
   }
 
@@ -462,6 +520,7 @@ try {
   })
   [System.Windows.Forms.Application]::Run()
 } finally {
+  if ($null -ne $notificationRelayTimer) { $notificationRelayTimer.Dispose() }
   if ($null -ne $rotationTimer) { $rotationTimer.Dispose() }
   if ($null -ne $notify) { $notify.Dispose() }
   if ($null -ne $trayIcon) { $trayIcon.Dispose() }
