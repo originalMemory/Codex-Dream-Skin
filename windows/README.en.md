@@ -98,10 +98,12 @@ in app** to open `dreamskin://apply?version=...`. Windows shows a native
 confirmation first. After confirmation, the client downloads that exact version
 only from `https://api.dreamskin.cc`, checks the reviewed metadata, actual byte
 count, and SHA-256, then runs the same manifest, image, ZIP, and Safe CSS checks
-as manual import before switching. Codex may restart when it is open without a
-usable skin session, so save unfinished input first. The link cannot provide an
-arbitrary download URL, file path, command, or silent-apply option. Incomplete
-legacy themes remain rejected by the client.
+as manual import before switching. If there is no verifiable skin session, the
+client first starts or restarts Codex and verifies that the on-disk active theme
+is the one visibly rendered; only then does it write the downloaded theme, so a
+rollback baseline is always available. Save unfinished input first. The link
+cannot provide an arbitrary download URL, file path, command, or silent-apply
+option. Incomplete legacy themes remain rejected by the client.
 
 Import a UI-free wallpaper rather than a preview containing a window, sidebar, composer, text, or buttons. Images may be at most 10 MB, 16384 pixels on either side, and 50 million total pixels.
 
@@ -200,6 +202,8 @@ Launch Codex through the `Codex Dream Skin` shortcut, then run verification. A n
 Starting with Codex Store `26.715.10079.0`, the owl runtime may convert package-activation arguments into a `codex://` path. The launcher detects that behavior and makes one raw-argument fallback attempt against the exact `ChatGPT.exe` in the same validated Store package; it does not change files or WindowsApps permissions.
 
 Field results in issue #235 now confirm two independent failures: WindowsApps returns `access-denied` for direct launch on `26.715.10079.0`, while `26.721.3404.0` retains the raw CDP arguments but its production runtime still opens no listener. Either result means that Codex/Windows combination cannot enable the skin within the project's safety boundary. The fallback is currently a safe diagnostic and rollback path, not a compatibility guarantee for affected owl builds. Do not take ownership of WindowsApps or patch the official package; keep the complete error and follow issue #235 for upstream compatibility status.
+
+If debug launch or visible renderer verification fails, the launcher first confirms that every Codex process started by this attempt is closed, then restores only this attempt's appearance-key values that are still unchanged. Newer config edits are preserved instead of replacing the whole file from an old backup. A bounded `preparing` transaction is saved before the marker/config commits; after a forced process termination, the next locked operation recovers by comparing the before, intended, and current values. If Codex cannot be confirmed closed or recovery cannot finish safely, one-click apply preserves the current theme files and exact prior-theme snapshot rather than racing the running app. This mechanism is not evidence that an affected official Codex build has restored CDP support.
 
 ### The skin stops working after a Codex update
 

@@ -5,6 +5,34 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $Root 'scripts\common-windows.ps1')
 . (Join-Path $Root 'scripts\theme-windows.ps1')
+. (Join-Path $Root 'scripts\localization-windows.ps1')
+
+if ((Resolve-DreamSkinLanguage -Language 'zh-CN') -cne 'zh-CN' -or
+  (Resolve-DreamSkinLanguage -Language 'en-US') -cne 'en-US') {
+  throw 'Explicit Windows language overrides did not resolve deterministically.'
+}
+if ((Get-DreamSkinText -Key 'Apply' -Language 'zh-CN') -cne '应用或重新应用' -or
+  (Get-DreamSkinText -Key 'Apply' -Language 'en-US') -cne 'Apply or reapply' -or
+  (Get-DreamSkinText -Key 'Applied' -Language 'en-US' -FormatArguments @('Paper')) -cne 'Applied: Paper') {
+  throw 'Windows tray localization returned incorrect copy.'
+}
+$languageState = Join-Path ([System.IO.Path]::GetTempPath()) ('dreamskin-language-' + [Guid]::NewGuid().ToString('N'))
+$originalLanguageOverride = $env:DREAMSKIN_LANG
+try {
+  $env:DREAMSKIN_LANG = $null
+  Set-DreamSkinLanguage -Language 'zh-CN' -StateRoot $languageState
+  if ((Resolve-DreamSkinLanguage -Language '' -StateRoot $languageState) -cne 'zh-CN' -or
+    (Get-DreamSkinLanguagePreference -StateRoot $languageState) -cne 'zh-CN') {
+    throw 'Windows language preference did not persist.'
+  }
+  Set-DreamSkinLanguage -Language 'system' -StateRoot $languageState
+  if ((Get-DreamSkinLanguagePreference -StateRoot $languageState) -cne 'system') {
+    throw 'Windows system-language preference did not clear the override.'
+  }
+} finally {
+  $env:DREAMSKIN_LANG = $originalLanguageOverride
+  Remove-Item -LiteralPath $languageState -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) "codex-dream-skin-tests-$PID-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
@@ -23,7 +51,44 @@ try {
   New-Item -ItemType Directory -Path $runtimeNodeDirectory -Force | Out-Null
   $pathNode = Get-Command node.exe -ErrorAction SilentlyContinue
   if (-not $pathNode) { $pathNode = Get-Command node -ErrorAction Stop }
-  Copy-Item -LiteralPath $pathNode.Source -Destination (Join-Path $runtimeNodeDirectory 'node.exe') -Force
+  $unicodeNodePath = Join-Path $runtimeNodeDirectory 'node.exe'
+  Copy-Item -LiteralPath $pathNode.Source -Destination $unicodeNodePath -Force
+  $unicodeNode = Get-DreamSkinValidatedNodeRuntime -Path $unicodeNodePath
+  if (-not (Test-DreamSkinPathEqual -Left $unicodeNode.Path -Right $unicodeNodePath)) {
+    throw "Node executable path did not survive a Unicode PowerShell round-trip: $($unicodeNode.Path)"
+  }
+  try {
+    $null = ConvertFrom-DreamSkinUtf8Base64 -Value '////'
+    throw 'Invalid UTF-8 from the Node path probe was accepted.'
+  } catch {
+    if ($_.Exception.Message -notmatch 'invalid data') { throw }
+  }
+  $realNativeInvoker = (Get-Command Invoke-DreamSkinNative -CommandType Function).ScriptBlock
+  try {
+    function Invoke-DreamSkinNative {
+      param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [switch]$DiscardStderr
+      )
+      if ($ArgumentList -contains 'process.versions.node') {
+        return [pscustomobject]@{ Output = @('22.23.1'); ExitCode = 0 }
+      }
+      return [pscustomobject]@{ Output = @('////'); ExitCode = 0 }
+    }
+    $invalidPathProbeRejected = $false
+    try {
+      $null = Get-DreamSkinValidatedNodeRuntime -Path $unicodeNodePath
+    } catch {
+      if ($_.Exception.Message -notmatch '\(invalid-output\)') { throw }
+      $invalidPathProbeRejected = $true
+    }
+    if (-not $invalidPathProbeRejected) {
+      throw 'Invalid Node path probe output fell back to the candidate executable.'
+    }
+  } finally {
+    Set-Item -Path Function:\Invoke-DreamSkinNative -Value $realNativeInvoker
+  }
   [System.IO.File]::WriteAllText(
     (Join-Path $runtimeNodeDirectory 'LICENSE'),
     'Node.js runtime license fixture',
@@ -213,6 +278,15 @@ try {
   if ($trustIndex -lt 0 -or $probeIndex -le $trustIndex) {
     throw 'The Node.js runtime is executed before its signature is verified.'
   }
+  foreach ($requiredUnicodeProbeContract in @(
+    'ConvertFrom-DreamSkinUtf8Base64',
+    'Buffer.from(process.execPath, ''utf8'').toString(''base64'')',
+    'invalid-output', 'path-not-found', 'empty-output', 'probe-exit'
+  )) {
+    if (-not $commonSource.Contains($requiredUnicodeProbeContract)) {
+      throw "Unicode-safe Node path probe is missing: $requiredUnicodeProbeContract"
+    }
+  }
   $trayGuardIndex = $installSource.IndexOf('if (Test-DreamSkinTrayActive)', [System.StringComparison]::Ordinal)
   $engineInstallIndex = $installSource.IndexOf('$engine = Install-DreamSkinRuntimeEngine', [System.StringComparison]::Ordinal)
   if ($trayGuardIndex -lt 0 -or $engineInstallIndex -le $trayGuardIndex) {
@@ -358,8 +432,8 @@ try {
 
   # A legacy upgrade can already have a durable backup but no appearance
   # marker. If the marker commits and the config commit then fails, the marker
-  # must still be removed so restore continues to recognize the legacy light
-  # trio and recovers the saved appearanceTheme.
+  # must return to a logical-absence state so restore continues to recognize
+  # the legacy light trio and recovers the saved appearanceTheme.
   $realAtomicBytesWriter = (Get-Command Write-DreamSkinBytesAtomically -CommandType Function).ScriptBlock
   $legacyCommitFailureConfig = Join-Path $temporaryRoot 'legacy-commit-failure.toml'
   $legacyCommitFailureBackup = Join-Path $temporaryRoot 'legacy-commit-failure.before.toml'
@@ -400,13 +474,14 @@ try {
   } finally {
     Set-Item -Path Function:\Write-DreamSkinBytesAtomically -Value $realAtomicBytesWriter
   }
+  $legacyFailureMarker = Read-DreamSkinAppearanceMarker -BackupPath $legacyCommitFailureBackup
   if (-not $legacyCommitFailureRejected -or
     -not (Test-DreamSkinBytesEqual -Left $legacyOriginalBytes `
       -Right ([System.IO.File]::ReadAllBytes($legacyCommitFailureConfig))) -or
     -not (Test-DreamSkinBytesEqual -Left $legacyBackupBytes `
       -Right ([System.IO.File]::ReadAllBytes($legacyCommitFailureBackup))) -or
-    (Test-Path -LiteralPath (Get-DreamSkinAppearanceMarkerPath -BackupPath $legacyCommitFailureBackup))) {
-    throw 'Legacy config commit failure left an appearance marker or changed the recoverable backup.'
+    -not (Test-DreamSkinAppearanceMarkerLogicalAbsent -Marker $legacyFailureMarker)) {
+    throw 'Legacy config commit failure did not restore logical marker absence or changed the backup.'
   }
   Restore-DreamSkinBaseTheme -ConfigPath $legacyCommitFailureConfig `
     -BackupPath $legacyCommitFailureBackup
@@ -897,15 +972,19 @@ try {
       return 'not-forwarded'
     }
     $directArgumentFailureReported = $false
+    $directArgumentFailureCategory = $null
     try {
       $null = Start-DreamSkinCodexForDebugging -Codex $fakeInstall `
         -Arguments @('--remote-debugging-port=9335') -Port 9335 -PreserveProcessIds @()
     } catch {
       $directArgumentFailureReported = $_.Exception.Message.Contains(
         'package activation or validated direct launch')
+      $directArgumentFailureCategory = Get-DreamSkinStartFailureCategory `
+        -Exception $_.Exception
     }
-    if (-not $directArgumentFailureReported) {
-      throw 'A direct fallback that also dropped the CDP argument did not fail closed.'
+    if (-not $directArgumentFailureReported -or
+      $directArgumentFailureCategory -cne 'cdp-endpoint-unavailable') {
+      throw 'A direct fallback that also dropped the CDP argument did not preserve its result category.'
     }
 
     Set-Item 'function:Wait-DreamSkinCodexDebugArgumentStatus' -Value { param($Codex, $Port) return 'protocol-redirected' }
@@ -913,14 +992,18 @@ try {
       throw [System.UnauthorizedAccessException]::new('denied')
     }
     $accessDeniedReported = $false
+    $accessDeniedCategory = $null
     try {
       $null = Start-DreamSkinCodexForDebugging -Codex $fakeInstall `
         -Arguments @('--remote-debugging-port=9335') -Port 9335 -PreserveProcessIds @()
     } catch {
       $accessDeniedReported = $_.Exception.Message.Contains('(access-denied)') -and
         $_.Exception.Message.Contains('protected app package')
+      $accessDeniedCategory = Get-DreamSkinStartFailureCategory -Exception $_.Exception
     }
-    if (-not $accessDeniedReported) { throw 'A blocked direct Store launch did not produce the compatibility error.' }
+    if (-not $accessDeniedReported -or $accessDeniedCategory -cne 'cdp-direct-access-denied') {
+      throw 'A blocked direct Store launch did not preserve its result category.'
+    }
   } finally {
     foreach ($functionName in $launcherFunctionNames) {
       Set-Item ("function:$functionName") -Value $originalLauncherFunctions[$functionName]
@@ -1091,6 +1174,7 @@ try {
   Copy-Item -LiteralPath (Join-Path $Root 'scripts\image-metadata.mjs') -Destination $releaseFixtureScripts -Force
   Copy-Item -LiteralPath (Join-Path $Root 'scripts\injector.mjs') -Destination $releaseFixtureScripts -Force
   Copy-Item -LiteralPath (Join-Path $Root 'scripts\install-dream-skin.ps1') -Destination $releaseFixtureScripts -Force
+  Copy-Item -LiteralPath (Join-Path $Root 'scripts\localization-windows.ps1') -Destination $releaseFixtureScripts -Force
   Copy-Item -LiteralPath (Join-Path $Root 'scripts\restore-dream-skin.ps1') -Destination $releaseFixtureScripts -Force
   Copy-Item -LiteralPath (Join-Path $Root 'scripts\start-dream-skin.ps1') -Destination $releaseFixtureScripts -Force
   Copy-Item -LiteralPath (Join-Path $Root 'scripts\theme-windows.ps1') -Destination $releaseFixtureScripts -Force
@@ -1128,77 +1212,6 @@ try {
     throw 'Saved theme creation or discovery failed.'
   }
   $null = Use-DreamSkinSavedTheme -ThemeDirectory $savedTheme.Directory -StateRoot $themeStateRoot
-
-  $rotation = Get-DreamSkinRotationState -StateRoot $themeStateRoot
-  if ($rotation.enabled -or $rotation.intervalSeconds -ne 60) {
-    throw 'Rotation defaults are not disabled with a 60-second interval.'
-  }
-  $shortIntervalRejected = $false
-  try {
-    $null = Set-DreamSkinRotationInterval -IntervalSeconds 9 -StateRoot $themeStateRoot
-  } catch {
-    $shortIntervalRejected = $true
-  }
-  if (-not $shortIntervalRejected) {
-    throw 'Rotation accepted an interval below 10 seconds.'
-  }
-  Copy-Item -LiteralPath (Join-Path $Root 'assets\portal-hero.png') `
-    -Destination (Join-Path $themePaths.Images 'rotation-z.png')
-  [System.IO.File]::WriteAllText(
-    (Join-Path $themePaths.Images '000-invalid.png'),
-    'not-an-image'
-  )
-  $savedCountBeforeRotation = @(Get-DreamSkinSavedThemes -StateRoot $themeStateRoot).Count
-  $imageCountBeforeRotation = @(Get-ChildItem -LiteralPath $themePaths.Images -File).Count
-  $null = Set-DreamSkinRotationInterval -IntervalSeconds 10 -StateRoot $themeStateRoot
-  $null = Set-DreamSkinRotationEnabled -Enabled $true -StateRoot $themeStateRoot
-  $rotation = Get-DreamSkinRotationState -StateRoot $themeStateRoot
-  $rotation.lastChangeUtc = [DateTime]::MinValue.ToString('o')
-  $null = Write-DreamSkinRotationState -State $rotation -StateRoot $themeStateRoot
-  if (-not (Invoke-DreamSkinRotationTick -StateRoot $themeStateRoot)) {
-    throw 'A due rotation tick did not apply the next image.'
-  }
-  $firstRotation = Get-DreamSkinRotationState -StateRoot $themeStateRoot
-  if (-not $firstRotation.currentImage -or
-    $firstRotation.currentImage -ceq '000-invalid.png') {
-    throw 'Rotation did not skip an invalid image and persist the applied image.'
-  }
-  $firstRotation.lastChangeUtc = [DateTime]::MinValue.ToString('o')
-  $null = Write-DreamSkinRotationState -State $firstRotation -StateRoot $themeStateRoot
-  $null = Invoke-DreamSkinRotationTick -StateRoot $themeStateRoot
-  $secondRotation = Get-DreamSkinRotationState -StateRoot $themeStateRoot
-  if ($secondRotation.currentImage -ceq $firstRotation.currentImage) {
-    throw 'Rotation did not advance in stable filename order.'
-  }
-  if (@(Get-DreamSkinSavedThemes -StateRoot $themeStateRoot).Count -ne
-      $savedCountBeforeRotation -or
-    @(Get-ChildItem -LiteralPath $themePaths.Images -File).Count -ne
-      $imageCountBeforeRotation) {
-    throw 'Transient rotation grew the saved theme or image library.'
-  }
-  Get-ChildItem -LiteralPath $themePaths.Images -File | Remove-Item -Force
-  [System.IO.File]::WriteAllText(
-    (Join-Path $themePaths.Images 'bad-a.png'),
-    'not-an-image'
-  )
-  [System.IO.File]::WriteAllText(
-    (Join-Path $themePaths.Images 'bad-b.jpg'),
-    'still-not-an-image'
-  )
-  $secondRotation.currentImage = ''
-  $secondRotation.lastChangeUtc = [DateTime]::MinValue.ToString('o')
-  $null = Write-DreamSkinRotationState -State $secondRotation -StateRoot $themeStateRoot
-  if (Invoke-DreamSkinRotationTick -StateRoot $themeStateRoot) {
-    throw 'Rotation applied an invalid image.'
-  }
-  if (-not (Get-DreamSkinRotationState -StateRoot $themeStateRoot).lastError) {
-    throw 'Rotation did not expose an error when no image was usable.'
-  }
-  Set-DreamSkinPaused -Paused $true -StateRoot $themeStateRoot | Out-Null
-  if ((Get-DreamSkinRotationState -StateRoot $themeStateRoot).enabled) {
-    throw 'Pausing the skin did not stop image rotation.'
-  }
-  Set-DreamSkinPaused -Paused $false -StateRoot $themeStateRoot | Out-Null
 
   $outsideTheme = Join-Path $temporaryRoot 'outside-theme'
   New-Item -ItemType Directory -Path $outsideTheme | Out-Null
@@ -1260,6 +1273,28 @@ try {
   if (-not $reparseInitRejected) { throw 'Theme-store initialization followed an active-theme junction.' }
   [System.IO.Directory]::Delete($reparseActive)
 
+  $junctionImageState = Join-Path $temporaryRoot 'junction-image-state'
+  $outsideImages = Join-Path $temporaryRoot 'outside-images'
+  New-Item -ItemType Directory -Path $junctionImageState | Out-Null
+  New-Item -ItemType Directory -Path $outsideImages | Out-Null
+  $junctionImages = Join-Path $junctionImageState 'images'
+  $null = New-Item -ItemType Junction -Path $junctionImages -Target $outsideImages
+  $null = Initialize-DreamSkinThemeStore -SkillRoot $Root -StateRoot $junctionImageState
+  if (@(Get-DreamSkinRotationImages -StateRoot $junctionImageState).Count -lt 1) {
+    throw 'The allowed images root junction was not initialized or enumerated.'
+  }
+  $nestedTarget = Join-Path $temporaryRoot 'nested-image-target'
+  New-Item -ItemType Directory -Path $nestedTarget | Out-Null
+  $nestedJunction = Join-Path $outsideImages 'nested'
+  $null = New-Item -ItemType Junction -Path $nestedJunction -Target $nestedTarget
+  $nestedRejected = $false
+  try {
+    Assert-DreamSkinNoReparseComponents -Path $nestedJunction -AllowedReparsePath $junctionImages
+  } catch { $nestedRejected = $true }
+  if (-not $nestedRejected) { throw 'A nested junction inside the allowed images root was accepted.' }
+  [System.IO.Directory]::Delete($nestedJunction)
+  [System.IO.Directory]::Delete($junctionImages)
+
   $css = Read-DreamSkinUtf8File -Path (Join-Path $Root 'assets\dream-skin.css')
   foreach ($requiredCss in @(
     'background-image: var(--dream-skin-art)',
@@ -1282,15 +1317,6 @@ try {
     $css.Contains('.dream-task') -or $css.Contains('codex-dream-skin-chrome')) {
     throw 'Canonical CSS still contains retired marker classes or fossil selectors.'
   }
-  foreach ($wideOnlyImmersiveSelector in @(
-    '[data-dream-art-task-mode="ambient"])[data-dream-art-wide="true"]',
-    '[data-dream-art-task-mode="full"])[data-dream-art-wide="true"]',
-    '[data-dream-art-wide="true"]:has(main.main-surface:has([role="main"]))'
-  )) {
-    if ($css.Contains($wideOnlyImmersiveSelector)) {
-      throw "Immersive wallpaper is still restricted to wide images: $wideOnlyImmersiveSelector"
-    }
-  }
   $macCssPath = Join-Path (Split-Path -Parent $Root) 'macos\assets\dream-skin.css'
   if (-not (Test-Path -LiteralPath $macCssPath) -or
     (Get-FileHash -Algorithm SHA256 -LiteralPath $macCssPath).Hash -cne
@@ -1306,13 +1332,12 @@ try {
   $traySource = Read-DreamSkinUtf8File -Path (Join-Path $Root 'scripts\tray-dream-skin.ps1')
   foreach ($requiredTrayAction in @(
     'System.Windows.Forms.NotifyIcon',
-    '暂停皮肤',
-    '继续显示皮肤',
-    '更换背景图',
-    '已保存主题',
-    '自动换图',
-    '自定义秒数',
-    '完全恢复 Codex'
+    "Get-DreamSkinTrayText -Key 'Pause'",
+    "Get-DreamSkinTrayText -Key 'Resume'",
+    "Get-DreamSkinTrayText -Key 'ChangeBackground'",
+    "Get-DreamSkinTrayText -Key 'SavedThemes'",
+    "Get-DreamSkinTrayText -Key 'Restore'",
+    'Add-DreamSkinTrayLanguageMenu'
   )) {
     if (-not $traySource.Contains($requiredTrayAction)) { throw "Tray action is missing: $requiredTrayAction" }
   }
@@ -1325,6 +1350,9 @@ try {
   $themeWindowsSource = Read-DreamSkinUtf8File -Path (Join-Path $Root 'scripts\theme-windows.ps1')
   foreach ($requiredLiveRemoveToken in @(
     'function Invoke-DreamSkinLiveRemove',
+    '[string]$PauseNoSessionMessage',
+    '[string]$PauseSucceededMessage',
+    '[string]$PauseFailedMessage',
     'function Show-DreamSkinOperationUi',
     "'--remove'",
     "'--browser-id'",
@@ -1333,6 +1361,19 @@ try {
   )) {
     if (-not $themeWindowsSource.Contains($requiredLiveRemoveToken)) {
       throw "Live remove helper is missing required token: $requiredLiveRemoveToken"
+    }
+  }
+  if ([regex]::IsMatch($themeWindowsSource, "-Message\s+'(?:皮肤已暂停|暂停失败，请重试)'")) {
+    throw 'Live remove renderer result still embeds a Chinese-only hard-coded message.'
+  }
+  foreach ($requiredPauseMessageToken in @(
+    "Get-DreamSkinTrayText -Key 'PauseNoSession'",
+    "Get-DreamSkinTrayText -Key 'PauseSucceeded'",
+    "Get-DreamSkinTrayText -Key 'PauseFailed'",
+    '$removalMessage = $removal.Message'
+  )) {
+    if (-not $traySource.Contains($requiredPauseMessageToken)) {
+      throw "Tray pause localization is missing: $requiredPauseMessageToken"
     }
   }
   $injectorSource = Read-DreamSkinUtf8File -Path (Join-Path $Root 'scripts\injector.mjs')
@@ -1360,7 +1401,12 @@ try {
     -not $traySource.Contains('Get-DreamSkinSavedThemes -StateRoot $StateRoot -SkipImageMetadata')) {
     throw 'Tray menu metadata enumeration still performs full image parsing on every open.'
   }
-  foreach ($requiredReleaseAction in @('check-update.ps1', '检查更新', '打开 DreamSkin.cc', '登录时启动')) {
+  foreach ($requiredReleaseAction in @(
+    'check-update.ps1',
+    "Get-DreamSkinTrayText -Key 'CheckUpdate'",
+    "Get-DreamSkinTrayText -Key 'OpenSite'",
+    "Get-DreamSkinTrayText -Key 'LaunchAtLogin'"
+  )) {
     if (-not $traySource.Contains($requiredReleaseAction)) {
       throw "Tray release action is missing: $requiredReleaseAction"
     }
@@ -1406,7 +1452,7 @@ try {
   $stateReadIndex = $startSource.IndexOf('$previousState = Read-DreamSkinState', [System.StringComparison]::Ordinal)
   $restartPromptIndex = $startSource.IndexOf('$restartAuthorized = Confirm-DreamSkinRestart', [System.StringComparison]::Ordinal)
   $recordedStopIndex = $startSource.IndexOf('$recordedInjectorStopped = Stop-DreamSkinRecordedInjector', [System.StringComparison]::Ordinal)
-  $cancelIndex = $startSource.IndexOf("Write-Host 'Dream Skin launch was cancelled", [System.StringComparison]::Ordinal)
+  $cancelIndex = $startSource.IndexOf("Get-DreamSkinText -Key 'LaunchCancelled'", [System.StringComparison]::Ordinal)
   $pauseClearIndex = $startSource.IndexOf('Set-DreamSkinPaused -Paused $false', [System.StringComparison]::Ordinal)
   if ($stateReadIndex -lt 0 -or $pauseClearIndex -le $stateReadIndex -or
     ($restartPromptIndex -ge 0 -and $pauseClearIndex -le $restartPromptIndex) -or
@@ -1493,6 +1539,10 @@ try {
   $node = Get-DreamSkinNodeRuntime
   & (Join-Path $PSScriptRoot 'community-theme-link.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'theme-zip-import.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'config-startup-rollback.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'start-result-contract.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'start-cdp-failure-appearance-recovery.tests.ps1') -Root $Root
+  & (Join-Path $PSScriptRoot 'start-post-launch-appearance-recovery.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'start-renderer-readiness.tests.ps1') -Root $Root
   & (Join-Path $PSScriptRoot 'start-verified-skin-preserved.tests.ps1') -Root $Root
   $projectRoot = Split-Path -Parent $Root

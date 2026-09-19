@@ -197,15 +197,26 @@ function ConvertFrom-DreamSkinCommunityThemeMetadata {
 }
 
 function Assert-DreamSkinNoReparseComponents {
-  param([Parameter(Mandatory = $true)][string]$Path)
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [string]$AllowedReparsePath
+  )
   $fullPath = [System.IO.Path]::GetFullPath($Path)
+  $allowed = if ($AllowedReparsePath) { [System.IO.Path]::GetFullPath($AllowedReparsePath).TrimEnd('\') } else { $null }
   $root = [System.IO.Path]::GetPathRoot($fullPath)
   $current = $fullPath
   while ($true) {
     if (Test-Path -LiteralPath $current) {
       $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
       if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-        throw "Managed Dream Skin path contains a junction or symbolic link: $current"
+        if (-not $allowed -or -not $current.TrimEnd('\').Equals($allowed, [System.StringComparison]::OrdinalIgnoreCase)) {
+          throw "Managed Dream Skin path contains a junction or symbolic link: $current"
+        }
+        $target = @($item.Target)[0]
+        if (-not $target -or $target -notmatch '^[A-Za-z]:\\' -or
+          -not (Test-Path -LiteralPath $target -PathType Container)) {
+          throw "Allowed Dream Skin images junction must target an existing local directory: $current"
+        }
       }
     }
     $currentNormalized = $current.TrimEnd('\')
@@ -220,7 +231,8 @@ function Assert-DreamSkinNoReparseComponents {
 function Ensure-DreamSkinManagedDirectory {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][string]$Root
+    [Parameter(Mandatory = $true)][string]$Root,
+    [string]$AllowedReparsePath
   )
   $fullPath = [System.IO.Path]::GetFullPath($Path)
   $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\')
@@ -228,12 +240,12 @@ function Ensure-DreamSkinManagedDirectory {
       $fullPath.StartsWith($fullRoot + '\', [System.StringComparison]::OrdinalIgnoreCase))) {
     throw "Managed Dream Skin path escaped its state root: $fullPath"
   }
-  Assert-DreamSkinNoReparseComponents -Path $fullPath
+  Assert-DreamSkinNoReparseComponents -Path $fullPath -AllowedReparsePath $AllowedReparsePath
   if (Test-Path -LiteralPath $fullPath -PathType Leaf) {
     throw "Managed Dream Skin path is a file, not a directory: $fullPath"
   }
   New-Item -ItemType Directory -Force -Path $fullPath | Out-Null
-  Assert-DreamSkinNoReparseComponents -Path $fullPath
+  Assert-DreamSkinNoReparseComponents -Path $fullPath -AllowedReparsePath $AllowedReparsePath
   if (-not (Test-Path -LiteralPath $fullPath -PathType Container)) {
     throw "Managed Dream Skin directory could not be created: $fullPath"
   }
@@ -471,9 +483,10 @@ function Initialize-DreamSkinThemeStore {
     [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin')
   )
   $paths = Get-DreamSkinThemePaths -StateRoot $StateRoot
-  foreach ($directory in @($paths.Root, $paths.Active, $paths.Saved, $paths.Images)) {
+  foreach ($directory in @($paths.Root, $paths.Active, $paths.Saved)) {
     Ensure-DreamSkinManagedDirectory -Path $directory -Root $paths.Root
   }
+  Ensure-DreamSkinManagedDirectory -Path $paths.Images -Root $paths.Root -AllowedReparsePath $paths.Images
   Invoke-DreamSkinThemeReplacementRecovery -Paths $paths
   $assetRoot = Join-Path $SkillRoot 'assets'
   $bundledTheme = Read-DreamSkinTheme -ThemeDirectory $assetRoot
@@ -493,9 +506,9 @@ function Initialize-DreamSkinThemeStore {
     Assert-DreamSkinNoReparseComponents -Path $activeImage
     Assert-DreamSkinImageFile -Path $activeImage
     $imageArchive = Join-Path $paths.Images $assetImageName
-    Assert-DreamSkinNoReparseComponents -Path $imageArchive
+    Assert-DreamSkinNoReparseComponents -Path $imageArchive -AllowedReparsePath $paths.Images
     Copy-Item -LiteralPath $assetImage -Destination $imageArchive -Force
-    Assert-DreamSkinNoReparseComponents -Path $imageArchive
+    Assert-DreamSkinNoReparseComponents -Path $imageArchive -AllowedReparsePath $paths.Images
     Assert-DreamSkinImageFile -Path $imageArchive
     Assert-DreamSkinNoReparseComponents -Path $activeTheme
     Copy-Item -LiteralPath (Join-Path $assetRoot 'theme.json') -Destination $activeTheme -Force
@@ -588,7 +601,7 @@ function Set-DreamSkinActiveTheme {
   $paths = Get-DreamSkinThemePaths -StateRoot $StateRoot
   Ensure-DreamSkinManagedDirectory -Path $paths.Root -Root $paths.Root
   Ensure-DreamSkinManagedDirectory -Path $paths.Active -Root $paths.Root
-  Ensure-DreamSkinManagedDirectory -Path $paths.Images -Root $paths.Root
+  Ensure-DreamSkinManagedDirectory -Path $paths.Images -Root $paths.Root -AllowedReparsePath $paths.Images
   $source = [System.IO.Path]::GetFullPath($ImagePath)
   Assert-DreamSkinImageFile -Path $source
   $extension = [System.IO.Path]::GetExtension($source).ToLowerInvariant()
@@ -648,9 +661,9 @@ function Set-DreamSkinActiveTheme {
   }
   if ($ArchiveImage) {
     $imageArchive = Join-Path $paths.Images $imageName
-    Assert-DreamSkinNoReparseComponents -Path $imageArchive
+    Assert-DreamSkinNoReparseComponents -Path $imageArchive -AllowedReparsePath $paths.Images
     Copy-Item -LiteralPath $target -Destination $imageArchive -Force
-    Assert-DreamSkinNoReparseComponents -Path $imageArchive
+    Assert-DreamSkinNoReparseComponents -Path $imageArchive -AllowedReparsePath $paths.Images
     Assert-DreamSkinImageFile -Path $imageArchive
   }
   return Read-DreamSkinTheme -ThemeDirectory $paths.Active
@@ -2247,10 +2260,14 @@ function Write-DreamSkinRotationState {
 function Get-DreamSkinRotationImages {
   param([string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'))
   $paths = Get-DreamSkinThemePaths -StateRoot $StateRoot
-  Ensure-DreamSkinManagedDirectory -Path $paths.Images -Root $paths.Root
-  return @(Get-ChildItem -LiteralPath $paths.Images -File -ErrorAction SilentlyContinue |
+  Ensure-DreamSkinManagedDirectory -Path $paths.Images -Root $paths.Root -AllowedReparsePath $paths.Images
+  $images = @(Get-ChildItem -LiteralPath $paths.Images -File -ErrorAction SilentlyContinue |
     Where-Object { $_.Extension -in @('.png', '.jpg', '.jpeg', '.webp') } |
     Sort-Object @{ Expression = { $_.Name.ToLowerInvariant() } }, Name)
+  foreach ($image in $images) {
+    Assert-DreamSkinNoReparseComponents -Path $image.FullName -AllowedReparsePath $paths.Images
+  }
+  return $images
 }
 
 function Set-DreamSkinRotationInterval {
@@ -2435,17 +2452,25 @@ function Show-DreamSkinOperationUi {
 function Invoke-DreamSkinLiveRemove {
   param(
     [string]$StateRoot = (Join-Path $env:LOCALAPPDATA 'CodexDreamSkin'),
-    [int]$TimeoutMs = 8000
+    [int]$TimeoutMs = 8000,
+    [string]$PauseNoSessionMessage = '没有可连接的活动会话；已记录暂停，当前窗口可能仍显示皮肤。',
+    [string]$PauseSucceededMessage = '皮肤已暂停',
+    [string]$PauseFailedMessage = '已记录暂停，但卸下当前皮肤失败；可重试暂停或完全恢复。'
   )
   if ($TimeoutMs -lt 250 -or $TimeoutMs -gt 120000) {
     throw "Invalid live-remove timeout: $TimeoutMs"
+  }
+  foreach ($message in @($PauseNoSessionMessage, $PauseSucceededMessage, $PauseFailedMessage)) {
+    if ([string]::IsNullOrWhiteSpace($message) -or $message.Length -gt 240 -or $message -match "[\r\n]") {
+      throw 'Invalid live-remove message.'
+    }
   }
   $session = Get-DreamSkinLiveSessionContext -StateRoot $StateRoot
   if ($null -eq $session) {
     return [pscustomobject]@{
       Attempted = $false
       Removed = $false
-      Message = '没有可连接的活动会话；已记录暂停，当前窗口可能仍显示皮肤。'
+      Message = $PauseNoSessionMessage
     }
   }
 
@@ -2469,21 +2494,21 @@ function Invoke-DreamSkinLiveRemove {
   if ($removal.ExitCode -eq 0) {
     if ($token) {
       $null = Show-DreamSkinOperationUi -Session $session -Phase finish -Token $token `
-        -UiState success -Message '皮肤已暂停' -TimeoutMs 1500
+        -UiState success -Message $PauseSucceededMessage -TimeoutMs 1500
     }
     return [pscustomobject]@{
       Attempted = $true
       Removed = $true
-      Message = '皮肤已暂停'
+      Message = $PauseSucceededMessage
     }
   }
   if ($token) {
     $null = Show-DreamSkinOperationUi -Session $session -Phase finish -Token $token `
-      -UiState error -Message '暂停失败，请重试' -TimeoutMs 1500
+      -UiState error -Message $PauseFailedMessage -TimeoutMs 1500
   }
   return [pscustomobject]@{
     Attempted = $true
     Removed = $false
-    Message = '已记录暂停，但卸下当前皮肤失败；可重试暂停或完全恢复。'
+    Message = $PauseFailedMessage
   }
 }
