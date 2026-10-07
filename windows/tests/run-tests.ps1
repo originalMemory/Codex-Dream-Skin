@@ -1361,7 +1361,8 @@ try {
     'Add-DreamSkinTrayLanguageMenu',
     'Invoke-DreamSkinNotificationRelay',
     'Get-DreamSkinNotificationClickToken',
-    'Start-DreamSkinCodexDirect',
+    '$shell.AppActivate([int]$managedMain[0].ProcessId)',
+    'Stop-Process -Id $processId -Force',
     '[switch]$Worker',
     '-Port $Port -Worker',
     '$shortcut.IconLocation'

@@ -189,22 +189,11 @@ try {
       if (-not $clickToken) { continue }
       $notificationRelayPids[$processId] = $true
       try {
-        $arguments = @(
-          '--remote-debugging-address=127.0.0.1',
-          "--remote-debugging-port=$($state.port)",
-          $profileToken,
-          $clickToken
-        )
-        $null = Start-DreamSkinCodexDirect -Codex $codex -Arguments $arguments
-        Start-Sleep -Milliseconds 750
-        if ($null -eq (Get-DreamSkinVerifiedCdpIdentity -Port ([int]$state.port) -Codex $codex)) {
-          continue
-        }
-        Stop-Process -Id $processId -Force -ErrorAction Stop
         $shell = New-Object -ComObject WScript.Shell
-        $null = $shell.AppActivate([int]$managedMain[0].ProcessId)
+        if (-not $shell.AppActivate([int]$managedMain[0].ProcessId)) { continue }
+        Stop-Process -Id $processId -Force -ErrorAction Stop
       } catch {
-        # Fail open: retain the notification window when forwarding is unavailable.
+        # Fail open: retain the notification window when activation is unavailable.
       }
     }
   }
