@@ -765,6 +765,10 @@ function Get-DreamSkinNodeRuntime {
     return Get-DreamSkinValidatedNodeRuntime -Path $bundledNode -MinimumMajor $MinimumMajor
   }
 
+  $systemNode = Join-Path ${env:ProgramFiles} 'nodejs\node.exe'
+  if (Test-Path -LiteralPath $systemNode -PathType Leaf) {
+    return Get-DreamSkinValidatedNodeRuntime -Path $systemNode -MinimumMajor $MinimumMajor
+  }
   $command = Get-Command node.exe -ErrorAction SilentlyContinue
   if (-not $command) { $command = Get-Command node -ErrorAction SilentlyContinue }
   if (-not $command) {
