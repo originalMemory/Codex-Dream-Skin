@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { readThemeTransparency, themePreferencesPath } from "../assets/theme-preferences.mjs";
 import { constants as fsConstants } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -39,7 +40,7 @@ const stableTestidLiteral = (testid) => {
   }
   return JSON.stringify(`[data-testid="${testid}"]`);
 };
-const SKIN_VERSION = "1.5.18";
+const SKIN_VERSION = "1.5.19";
 // .github/workflows/ci.yml's version-consistency check greps this file for a
 // literal `const SKIN_VERSION = "...";` line, so the export stays a separate
 // statement rather than an inline `export const`.
@@ -521,7 +522,7 @@ async function loadSafeCss(themeRoot) {
   }
 }
 
-export async function loadTheme(themeDir) {
+export async function loadTheme(themeDir, preferenceOptions = {}) {
   const realThemeDir = await fs.realpath(themeDir);
   const themePath = path.join(realThemeDir, "theme.json");
   const themeText = await fs.readFile(themePath, "utf8");
@@ -589,6 +590,8 @@ export async function loadTheme(themeDir) {
     explicitColorKeys: rawColors ? colorKeys.filter((key) => Object.hasOwn(rawColors, key)) : [],
     colors,
   };
+  const userTransparency = await readThemeTransparency(theme.id, { preferencesPath: themePreferencesPath("win32"), ...preferenceOptions });
+  if (userTransparency !== undefined) theme.userTransparency = userTransparency;
   const [themeStat, imageStat, safeCss] = await Promise.all([
     fs.stat(themePath),
     fs.stat(realImagePath),
@@ -610,6 +613,7 @@ export async function loadTheme(themeDir) {
   theme.artMetadata = artMetadata;
   const fingerprint = createHash("sha256")
     .update(themeText, "utf8")
+    .update(JSON.stringify({ userTransparency: theme.userTransparency }))
     .update("\0")
     .update(imageBytes)
     .update("\0")
@@ -1228,16 +1232,26 @@ export async function verifySession(
         x: Math.round(r.x), y: Math.round(r.y),
         width: Math.round(r.width), height: Math.round(r.height),
         visible: Boolean(node.isConnected !== false && cssVisible && intersectsViewport),
+        withinViewport: r.x >= 0 && r.y >= 0 && right <= innerWidth && bottom <= innerHeight,
       };
     };
-    const homeIndicator = document.querySelector(${selectorLiteral("home-icon")});
-    const homeSignal = homeIndicator ?? document.querySelector(${selectorLiteral("game-source")}) ??
-      document.querySelector(${selectorLiteral("home-suggestions")});
+    const activeNodes = (selector) => [...document.querySelectorAll(selector)]
+      .filter((node) => !node.closest?.('[data-app-shell-active-page="false"]'));
+    // Hidden home-icon is an intentional theme rule: use ancestry for signals,
+    // and the existing visibility test only for measured layout landmarks.
+    const firstActive = (selector) => activeNodes(selector)[0] ?? null;
+    const firstVisible = (selector) => {
+      const nodes = activeNodes(selector);
+      return nodes.find((node) => box(node)?.visible) ?? nodes[0] ?? null;
+    };
+    const homeIndicator = firstActive(${selectorLiteral("home-icon")});
+    const homeSignal = homeIndicator ?? firstActive(${selectorLiteral("game-source")}) ??
+      firstActive(${selectorLiteral("home-suggestions")});
     const homeRoute = homeSignal?.closest('[role="main"]') ?? null;
     // Codex 26.721.x can render the home content before home-icon. Reuse the
     // already-resolved semantic home container so a healthy home session is
     // not rejected solely because the stricter home-icon selector is late.
-    const home = document.querySelector(${selectorLiteral("home-route")}) ?? homeRoute;
+    const home = firstVisible(${selectorLiteral("home-route")}) ?? homeRoute;
     const suggestions = home?.querySelector(${selectorLiteral("home-suggestions")}) ?? null;
     const cardButtons = suggestions ? [...suggestions.querySelectorAll('button')] : [];
     const cards = cardButtons.map(box);
@@ -1257,9 +1271,9 @@ export async function verifySession(
     const visibleSuggestionLabels = suggestionLabels.filter((item) => item?.visible);
     const suggestionLabelColorsMatch = visibleSuggestionLabels.every((item) =>
       item.color === item.expectedColor);
-    const settingsAnchor = document.querySelector(${selectorLiteral("settings-panel")}) ||
-      document.querySelector(${selectorLiteral("appearance-radio")}) ||
-      document.querySelector(${stableTestidLiteral("theme-preview")});
+    const settingsAnchor = firstVisible(${selectorLiteral("settings-panel")}) ||
+      firstVisible(${selectorLiteral("appearance-radio")}) ||
+      firstVisible(${stableTestidLiteral("theme-preview")});
     const runtime = window.__CODEX_DREAM_SKIN_STATE__;
     const adopted = runtime?.styleMode === 'adopted' &&
       [...document.adoptedStyleSheets].includes(runtime.styleSheet);
@@ -1304,11 +1318,11 @@ export async function verifySession(
       visibleCardCount: visibleCards.length,
       suggestionLabels,
       suggestionLabelColorsMatch,
-      composer: box(document.querySelector(${selectorLiteral("composer-chrome")})),
-      shell: box(document.querySelector(${selectorLiteral("shell-main")})),
-      sidebar: box(document.querySelector(${selectorLiteral("left-panel")})),
-      genericMain: box(document.querySelector('[data-ds-part="main"], [data-ds-part="home"]')),
-      genericInput: box(document.querySelector('[data-ds-part="composer"]')),
+      composer: box(firstVisible(${selectorLiteral("composer-chrome")})),
+      shell: box(firstVisible(${selectorLiteral("shell-main")})),
+      sidebar: box(firstVisible(${selectorLiteral("left-panel")})),
+      genericMain: box(firstVisible('[data-ds-part="main"], [data-ds-part="home"]')),
+      genericInput: box(firstVisible('[data-ds-part="composer"]')),
       nativeWindow: ${JSON.stringify(nativeWindow)},
       documentVisibility: document.visibilityState ?? null,
       documentHidden: document.hidden === true,
@@ -1354,7 +1368,16 @@ export async function verifySession(
       windowPass, documentPass, viewportPass, structurePass,
       nativeWindowPass, fallbackWindowPass,
     };
+    // A visible shell can coexist with a Home composer pushed below the window.
+    // Mere intersection is insufficient: the observed Windows regression left
+    // only 37px of a 98px composer inside a 600px viewport. Keep this requirement
+    // scoped to Home, since tool/settings pages can legitimately omit input.
+    const homeComposer = result.composer ?? result.genericInput;
+    result.homeComposerPass = !homeScope || Boolean(
+      homeComposer?.visible && homeComposer.withinViewport
+    );
     const homePass = !homeScope || (
+      result.homeComposerPass &&
       result.homePresent && Boolean(result.homeSurface?.visible) &&
       ((result.hero?.visible && result.hero.width >= 280 && result.hero.height >= 120) ||
         Boolean(result.genericMain?.visible)) &&
@@ -1637,6 +1660,12 @@ async function runWatch(options) {
         try {
           const now = Date.now();
           let shouldAudit = !loadedPayload || now - lastStrongThemeAuditAt >= STRONG_THEME_AUDIT_MS;
+          if (!shouldAudit) {
+            const userTransparency = await readThemeTransparency(loadedPayload.theme.id, {
+              preferencesPath: themePreferencesPath("win32"),
+            });
+            shouldAudit = userTransparency !== loadedPayload.theme.userTransparency;
+          }
           if (!shouldAudit) {
             try {
               shouldAudit = await readThemeSourceStamp(loadedPayload) !== loadedPayload.sourceStamp;

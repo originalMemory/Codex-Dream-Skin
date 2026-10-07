@@ -100,7 +100,7 @@ UPDATE_JSON="$({
 })"
 "$NODE" -e '
   const value = JSON.parse(process.argv[1]);
-  if (value.currentVersion !== "v1.5.18" || value.latestVersion !== "v9.8.7") process.exit(1);
+  if (value.currentVersion !== "v1.5.19" || value.latestVersion !== "v9.8.7") process.exit(1);
   if (!value.updateAvailable) process.exit(1);
   if (value.releaseUrl !== "https://github.com/Fei-Away/Codex-Dream-Skin/releases/latest") process.exit(1);
 ' "$UPDATE_JSON"
@@ -110,7 +110,7 @@ UPDATE_REDIRECT_JSON="$({
 })"
 "$NODE" -e '
   const value = JSON.parse(process.argv[1]);
-  if (value.currentVersion !== "v1.5.18" || value.latestVersion !== "v9.8.7") process.exit(1);
+  if (value.currentVersion !== "v1.5.19" || value.latestVersion !== "v9.8.7") process.exit(1);
   if (!value.updateAvailable) process.exit(1);
   if (value.releaseUrl !== "https://github.com/Fei-Away/Codex-Dream-Skin/releases/latest") process.exit(1);
 ' "$UPDATE_REDIRECT_JSON"
@@ -171,8 +171,11 @@ fi
 PROJECT_ROOT="$(cd "$ROOT/.." && pwd -P)"
 "$NODE" "$PROJECT_ROOT/tools/sync-runtime-assets.mjs" --check
 "$NODE" "$PROJECT_ROOT/tools/doctor-selectors.test.mjs"
-if ! /usr/bin/cmp -s "$ROOT/assets/dream-skin.css" "$PROJECT_ROOT/windows/assets/dream-skin.css" ||
-    ! /usr/bin/cmp -s "$ROOT/assets/renderer-inject.js" "$PROJECT_ROOT/windows/assets/renderer-inject.js" ||
+# The sync check above validates each CSS output against its canonical source:
+# macOS keeps shared CSS, Windows applies explicit Home/motion/shell adapters.
+# Keep byte identity mandatory for the remaining shared executable assets.
+"$NODE" --test "$PROJECT_ROOT/tools/windows-home-css.test.mjs" "$PROJECT_ROOT/tools/windows-motion-css.test.mjs"
+if ! /usr/bin/cmp -s "$ROOT/assets/renderer-inject.js" "$PROJECT_ROOT/windows/assets/renderer-inject.js" ||
     ! /usr/bin/cmp -s "$ROOT/assets/safe-css-policy.json" "$PROJECT_ROOT/windows/assets/safe-css-policy.json" ||
     ! /usr/bin/cmp -s "$ROOT/assets/safe-css-validator.mjs" "$PROJECT_ROOT/windows/assets/safe-css-validator.mjs" ||
     ! /usr/bin/cmp -s "$ROOT/assets/selectors.json" "$PROJECT_ROOT/windows/assets/selectors.json" ||
@@ -1231,7 +1234,7 @@ CRLF_BACKUP="$TMP/config-crlf-backup.json"
 "$NODE" "$ROOT/scripts/theme-config.mjs" restore "$CRLF_CONFIG" "$CRLF_BACKUP" >/dev/null
 /usr/bin/cmp -s "$CRLF_CONFIG" "$TMP/original-crlf.toml"
 
-/usr/bin/env -u HOME /bin/bash -c '. "$1/scripts/common-macos.sh"; [ -n "$HOME" ] && [ "$SKIN_VERSION" = "1.5.18" ]' _ "$ROOT"
+/usr/bin/env -u HOME /bin/bash -c '. "$1/scripts/common-macos.sh"; [ -n "$HOME" ] && [ "$SKIN_VERSION" = "1.5.19" ]' _ "$ROOT"
 if [ "${CODEX_DREAM_SKIN_SKIP_DOCTOR:-0}" = "1" ]; then
   printf 'SKIP: Doctor requires an installed, signed Codex app.\n'
   DOCTOR_RESULT="skipped"
