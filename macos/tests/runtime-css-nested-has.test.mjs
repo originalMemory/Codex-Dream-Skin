@@ -40,6 +40,25 @@ const findNestedHas = (css) => {
 };
 
 for (const file of files) {
+  test(`whole-window wallpaper is not restricted to wide images in ${file}`, () => {
+    const css = readFileSync(join(root, file), "utf8");
+    const gatedRules = css.split("}").filter(rule => rule.includes('[data-dream-art-wide="true"]') &&
+      /\bbody\s*\{|(?:LEFT_PANEL|app-shell-left-panel)/.test(rule));
+    assert.deepEqual(gatedRules, [], "Portrait and square images must share the body/sidebar wallpaper.");
+  });
+
+  test(`activity and thinking cards use a thirty-percent overlay while review cards keep native styling in ${file}`, () => {
+    const css = readFileSync(join(root, file), "utf8");
+    const shell = file.startsWith("runtime/")
+      ? "__DREAM_SELECTOR_SHELL_MAIN__"
+      : 'main:is(.main-surface, [data-app-shell-main-surface], [class*="_MainContentSurface_"])';
+    assert.ok(css.includes(`${shell} [class~="group/agent-activity"] > .outline-none`));
+    assert.ok(css.includes('html[data-dream-skin="active"] [data-response-annotation-target]'));
+    assert.ok(css.includes('html[data-dream-skin="active"] [data-local-conversation-user-anchor] [class~="bg-user-message"]'));
+    assert.match(css, /\[data-response-annotation-conversation\]\[data-response-annotation-target\]\s*\{[\s\S]*?background:\s*rgb\(var\(--ds-panel-rgb\) \/ \.30\) !important;/);
+    assert.match(css, /\[data-local-conversation-item-target-ids\]\s*\{[\s\S]*?background:\s*rgb\(var\(--ds-panel-rgb\) \/ \.30\) !important;/);
+    assert.doesNotMatch(css, /resource-card-max-width[^}]*background:\s*rgb\(var\(--ds-panel-rgb\) \/ \.30\)/);
+  });
   test(`Home suggestion text supports old and current native classes in ${file}`, () => {
     const css = readFileSync(join(root, file), "utf8");
     const home = file.startsWith("runtime/")

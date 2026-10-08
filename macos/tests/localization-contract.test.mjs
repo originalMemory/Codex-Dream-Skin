@@ -23,6 +23,13 @@ const scriptRunner = readFileSync(
 );
 const buildScript = readFileSync(join(root, "scripts", "build-menubar-app.sh"), "utf8");
 
+test("native rotation retains its menu, timer and packaged script after upstream merges", () => {
+  assert.match(appDelegate, /addRotationMenu\(enabled: enabled, to: submenu\)/);
+  assert.match(appDelegate, /refreshStatusFromTimer\(\)\s*\{\s*refreshStatus\(\)\s*tickRotation\(\)/);
+  assert.match(appDelegate, /arguments: \["tick"\]/);
+  assert.match(buildScript, /\n\s*rotate-images-macos\.sh\n/);
+});
+
 test("macOS shell catalogs keep matching English and Chinese keys", () => {
   const matches = [...helper.matchAll(/\b(zh|en):([a-z][a-z0-9_]*)\)/g)];
   const keys = { zh: new Set(), en: new Set() };
