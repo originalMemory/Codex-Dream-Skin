@@ -59,10 +59,10 @@ try {
     foreach ($folder in @($desktop, $startMenu)) {
       $shortcut = $shell.CreateShortcut((Join-Path $folder 'Codex Dream Skin.lnk'))
       $shortcut.TargetPath = $powershell
-      $shortcut.Arguments = "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File `"$trayScript`"$portArgument -ShowWindow"
+      $shortcut.Arguments = "-NoProfile -ExecutionPolicy RemoteSigned -File `"$startScript`"$portArgument -PromptRestart"
       $shortcut.WorkingDirectory = $engine.Root
-      $shortcut.Description = 'Open Codex Dream Skin themes and apply a verified theme'
-      if (Test-Path -LiteralPath $iconPath -PathType Leaf) { $shortcut.IconLocation = "$iconPath,0" }
+      $shortcut.Description = 'Launch the official Codex app with Codex Dream Skin'
+      $shortcut.IconLocation = "$iconPath,0"
       $shortcut.Save()
     }
 
@@ -71,7 +71,7 @@ try {
     $restore.Arguments = "-NoProfile -ExecutionPolicy RemoteSigned -File `"$restoreScript`"$portArgument -RestoreBaseTheme -PromptRestart"
     $restore.WorkingDirectory = $engine.Root
     $restore.Description = 'Restore the official Codex appearance and close the CDP session'
-    if (Test-Path -LiteralPath $iconPath -PathType Leaf) { $restore.IconLocation = "$iconPath,0" }
+    $restore.IconLocation = "$iconPath,0"
     $restore.Save()
 
     foreach ($folder in @($desktop, $startMenu)) {
@@ -80,7 +80,7 @@ try {
       $tray.Arguments = "-NoProfile -STA -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File `"$trayScript`"$portArgument"
       $tray.WorkingDirectory = $engine.Root
       $tray.Description = 'Open Codex Dream Skin status and theme controls in the system tray'
-      if (Test-Path -LiteralPath $iconPath -PathType Leaf) { $tray.IconLocation = "$iconPath,0" }
+      $tray.IconLocation = "$iconPath,0"
       $tray.Save()
     }
     Start-Process -FilePath $powershell -ArgumentList `
